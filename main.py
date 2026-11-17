@@ -20,6 +20,7 @@ from processor import (
     pixel_size, source_dimensions, page_groups, render_layout_page,
 )
 from pdf_import import import_pdf_pages, matched_paper
+from pdf_sources import recover_sources
 from mobile_import import PhoneTransferServer
 from project_io import save_project, load_project, ProjectError
 import qrcode
@@ -83,6 +84,7 @@ class ReveloApp:
         self.paths: list[Path] = []
         self.path_labels: dict[Path, str] = {}
         self.pdf_origins: dict[Path, Path] = {}
+        self.recovered_pdf_sources: set[Path] = set()
         self.pdf_temp = tempfile.TemporaryDirectory(prefix="Revelo_PDF_")
         self.mobile_temp = tempfile.TemporaryDirectory(prefix="Revelo_Movil_")
         self.project_temp = tempfile.TemporaryDirectory(prefix="Revelo_Proyecto_")
@@ -476,7 +478,7 @@ class ReveloApp:
         if not selected:
             return
         existing = set(self.paths)
-        imported_pdfs = set(self.pdf_origins.values())
+        imported_pdfs = set(self.pdf_origins.values()) | set(self.recovered_pdf_sources)
         self._set_busy(True)
         self.feedback.set("Importando archivos… No se modificará ninguno de los originales.")
         self.progress["value"] = 0
@@ -498,17 +500,35 @@ class ReveloApp:
                         continue
                     temp_dir = Path(self.pdf_temp.name) / uuid.uuid4().hex
                     try:
-                        images, sizes = import_pdf_pages(
-                            source, temp_dir,
-                            progress=lambda i, n, name: self.updates.put(("import_progress", i, n, name)),
-                        )
-                        paper, has_mixed = matched_paper(sizes)
-                        if detected_paper is None:
-                            detected_paper = paper
-                        mixed_pdf = mixed_pdf or has_mixed
-                        for number, image in enumerate(images, 1):
-                            dims = source_dimensions(image)
-                            items.append((image, dims, f"{source.name} · pág. {number}", source))
+                        progress = lambda i, n, name: self.updates.put(("import_progress", i, n, name))
+                        try:
+                            originals = recover_sources(source, temp_dir, progress=progress)
+                        except Exception:
+                            # Si un lector elimina o altera el adjunto interno,
+                            # el PDF debe seguir pudiendo abrirse como páginas.
+                            originals = None
+                            errors.append(f"{source.name}: no se recuperaron originales adjuntos; se leerán sus páginas como imágenes")
+                        if originals is not None:
+                            images, sizes, per_sheet = originals
+                            # Las fotos recuperadas son originales: NO se deben
+                            # marcar como página PDF ni intentar quitarles un fondo.
+                            paper, has_mixed = matched_paper(sizes)
+                            if detected_paper is None:
+                                detected_paper = paper
+                            mixed_pdf = mixed_pdf or has_mixed
+                            for number, image in enumerate(images, 1):
+                                dims = source_dimensions(image)
+                                items.append((image, dims, f"{source.name} · foto original {number}", None))
+                            self.updates.put(("pdf_recovered", source, len(images), per_sheet))
+                        else:
+                            images, sizes = import_pdf_pages(source, temp_dir, progress=progress)
+                            paper, has_mixed = matched_paper(sizes)
+                            if detected_paper is None:
+                                detected_paper = paper
+                            mixed_pdf = mixed_pdf or has_mixed
+                            for number, image in enumerate(images, 1):
+                                dims = source_dimensions(image)
+                                items.append((image, dims, f"{source.name} · pág. {number}", source))
                     except Exception as error:
                         errors.append(f"{source.name}: {error}")
                 elif source.suffix.lower() in SUPPORTED_EXTENSIONS:
@@ -965,7 +985,7 @@ class ReveloApp:
             return
         dest = Path(dest_name)
         # Nunca se permite reemplazar por accidente un PDF que se haya importado.
-        if opts.fmt != "Imagenes" and dest.resolve() in set(self.pdf_origins.values()):
+        if opts.fmt != "Imagenes" and dest.resolve() in (set(self.pdf_origins.values()) | self.recovered_pdf_sources):
             messagebox.showwarning("Conserva el PDF original",
                 "Has elegido el mismo PDF que has importado.\nGuarda el nuevo documento con otro nombre para conservar el recetario original.")
             return
@@ -1068,6 +1088,7 @@ class ReveloApp:
         self.pages = loaded["pages"]
         self.path_labels = loaded["labels"]
         self.pdf_origins = loaded["pdf_origins"]
+        self.recovered_pdf_sources.clear()
         self.thumbnails.clear()
         self.thumbnails_small.clear()
         self.details.clear()
@@ -1094,6 +1115,69 @@ class ReveloApp:
         self.feedback.set(f"✓ Proyecto abierto: {source.name} · {len(self.paths)} elementos · orden recuperado")
         old.cleanup()
 
+    def _show_export_completed(self, result: Path, sheet_count: int,
+                               element_count: int, warning_count: int) -> None:
+        """Ventana propia de Revelo, sin cuadros genéricos de Windows."""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Revelo · Exportación completada")
+        dialog.configure(bg=BG)
+        dialog.geometry("630x375" if warning_count else "630x335")
+        dialog.minsize(480, 260)
+        dialog.resizable(True, True)
+        dialog.transient(self.root)
+        try:
+            ico = app_asset("icono.ico")
+            if sys.platform == "win32" and ico.exists():
+                dialog.iconbitmap(str(ico))
+        except tk.TclError:
+            pass
+        dialog.update_idletasks()
+        x = self.root.winfo_rootx() + max(0, (self.root.winfo_width() - dialog.winfo_width()) // 2)
+        y = self.root.winfo_rooty() + max(0, (self.root.winfo_height() - dialog.winfo_height()) // 2)
+        dialog.geometry(f"+{x}+{y}")
+        container = tk.Frame(dialog, bg=BG, padx=26, pady=22)
+        container.pack(fill="both", expand=True)
+        headline = tk.Frame(container, bg=BG)
+        headline.pack(fill="x")
+        icon = tk.Label(headline, text="✓", bg=ACCENT, fg=BG,
+                        font=("Segoe UI", 19, "bold"), width=2, height=1)
+        icon.pack(side="left", padx=(0, 15))
+        heading = tk.Frame(headline, bg=BG)
+        heading.pack(side="left")
+        self._label(heading, "Exportación completada", size=18, weight="bold").pack(anchor="w")
+        self._label(heading, "El documento ya está listo para imprimir.",
+                    size=10, color=MUTED).pack(anchor="w", pady=(2, 0))
+
+        panel = tk.Frame(container, bg=SURFACE, padx=15, pady=13,
+                         highlightbackground=BORDER, highlightthickness=1)
+        panel.pack(fill="x", pady=(21, 12))
+        self._label(panel, f"{sheet_count} hoja(s) · {element_count} elemento(s)",
+                    size=12, weight="bold", bg=SURFACE).pack(anchor="w")
+        self._label(panel, str(result), size=10, color=MUTED, bg=SURFACE,
+                    wraplength=520, justify="left").pack(anchor="w", pady=(6, 0))
+        if result.suffix.lower() == ".pdf":
+            self._label(container,
+                        "Este PDF incluye las imágenes originales para poder reeditarlas en Revelo. "
+                        "Si lo compartes, también podrán extraerse esas imágenes.",
+                        size=9, color=MUTED, wraplength=540,
+                        justify="left").pack(anchor="w", pady=(0, 8))
+        if warning_count:
+            self._label(container,
+                        f"Atención: {warning_count} elemento(s) podrían verse borrosos al imprimir.",
+                        size=10, color=WARNING, wraplength=555,
+                        justify="left").pack(anchor="w", pady=(2, 8))
+        footer = tk.Frame(container, bg=BG)
+        footer.pack(side="bottom", fill="x")
+        self._button(footer, "Aceptar", dialog.destroy, small=True, accent=True).pack(side="right")
+        def open_folder():
+            dialog.destroy()
+            self.open_result()
+        self._button(footer, "Abrir carpeta", open_folder, small=True).pack(side="right", padx=(0, 8))
+        dialog.bind("<Escape>", lambda _evt: dialog.destroy())
+        dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
+        dialog.grab_set()
+        dialog.focus_set()
+
     def _poll(self):
         try:
             while True:
@@ -1109,6 +1193,10 @@ class ReveloApp:
                     self.progress["value"] = percent
                     self.percent_text.set(f"({percent} %)")
                     self.feedback.set(f"Leyendo {name}: página {current}/{total}  ({percent} %)")
+                elif event[0] == "pdf_recovered":
+                    _, source, count, per_sheet = event
+                    self.recovered_pdf_sources.add(source.resolve())
+                    self.feedback.set(f"PDF reversible: recuperadas {count} fotografías originales de {source.name}")
                 elif event[0] == "import_done":
                     _, items, detected_paper, mixed_pdf, errors = event
                     self._finish_import(items, detected_paper, mixed_pdf, errors)
@@ -1157,10 +1245,7 @@ class ReveloApp:
                     self.open_btn.configure(state="normal")
                     sheet_count = math.ceil(count / int(self.per_sheet.get()))
                     self.feedback.set(f"✓ {sheet_count} hoja(s) exportadas. Resultado: {self.output_path.name}")
-                    note = (f"\n\nAtención: {warning_count} foto(s) se han ampliado bastante. "
-                            "Puede que se vean borrosas al imprimir." if warning_count else "")
-                    messagebox.showinfo("Exportación completada",
-                                        f"Se han preparado {sheet_count} hoja(s) con {count} elementos.\n\nGuardado en:\n{result}{note}")
+                    self._show_export_completed(Path(result), sheet_count, count, warning_count)
                 elif event[0] == "error":
                     self._set_busy(False)
                     self.export_btn.configure(text="Exportar fotos   →")

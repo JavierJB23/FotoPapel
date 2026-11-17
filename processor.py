@@ -220,7 +220,10 @@ def _trim_revelo_like_page_background(source: Image.Image) -> tuple[Image.Image,
         if horizontal and occupancy_columns(left, w - right) < .55:
             horizontal = False
         if not (vertical or horizontal):
-            return source.copy(), False
+            # PDFs antiguos con fondo ampliado tienen franjas difuminadas en
+            # lugar de blancas: intentamos aislar solo el núcleo nítido.
+            from pdf_cleanup import detect_blurred_background
+            return detect_blurred_background(source)
         x0 = left if horizontal else 0
         x1 = w - right if horizontal else w
         y0 = top if vertical else 0
@@ -716,6 +719,12 @@ def export_pdf(paths: Sequence[Path], opts: ExportOptions, target: Path, progres
             if progress:
                 progress(i, len(groups), f"Hoja {i}")
         document.save()
+        # Guardar fuentes originales dentro de la copia PDF: futuras importaciones
+        # pueden recuperar cada fotografía, sin confundirla con los fondos borrosos.
+        from pdf_sources import attach_sources
+        attach_sources(target, list(paths), opts.photos_per_page, opts.pdf_page_paths)
+        if progress:
+            progress(len(groups), len(groups), "Originales incluidos en el PDF")
     except Exception:
         try:
             document.save()
