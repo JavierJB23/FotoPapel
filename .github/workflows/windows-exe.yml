@@ -1,4 +1,4 @@
-name: Crear EXE de FotoPapel
+name: Crear EXE de Revelo
 
 on:
   workflow_dispatch:
@@ -23,14 +23,19 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
-      - name: Compilar FotoPapel.exe
+      - name: Probar funciones principales
         shell: pwsh
         run: |
-          python -m PyInstaller --noconfirm --clean --onefile --windowed --name FotoPapel --icon icono.ico --collect-submodules PIL --collect-submodules reportlab main.py
+          python -m pip install pytest
+          python -m pytest -q
+      - name: Compilar Revelo.exe
+        shell: pwsh
+        run: |
+          python -m PyInstaller --noconfirm --clean --onefile --windowed --name Revelo --icon icono.ico --add-data "icono.ico;." --collect-submodules PIL --collect-submodules reportlab --collect-all pypdfium2 main.py
       - name: Publicar EXE descargable
         uses: actions/upload-artifact@v4
         with:
-          name: FotoPapel-Windows-EXE
-          path: dist/FotoPapel.exe
+          name: Revelo-Windows-EXE
+          path: dist/Revelo.exe
           if-no-files-found: error
           retention-days: 30
