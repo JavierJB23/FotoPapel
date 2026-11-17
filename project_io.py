@@ -41,6 +41,7 @@ def save_project(
     target: Path, paths: Iterable[Path], ordered: Iterable[Path],
     labels: dict[Path, str], pdf_origins: dict[Path, Path],
     settings: dict, progress: Progress | None = None,
+    *, special_pages: dict[Path, dict] | None = None,
 ) -> Path:
     """Guarda todo dentro de UN archivo; no depende de rutas originales."""
     paths = list(paths)
@@ -51,6 +52,8 @@ def save_project(
         raise ProjectError("El orden no coincide con la biblioteca")
     target = Path(target)
     target.parent.mkdir(parents=True, exist_ok=True)
+    from special_pages import validate_special_spec
+    special_pages = special_pages or {}
     records = []
     names = {}
     total_bytes = 0
@@ -67,7 +70,8 @@ def save_project(
         records.append({
             "asset": arcname,
             "label": str(labels.get(path, path.name))[:300],
-            "kind": "pdf_page" if path in pdf_origins else "image",
+            "kind": "special_page" if path in special_pages else ("pdf_page" if path in pdf_origins else "image"),
+            "special": validate_special_spec(special_pages[path]) if path in special_pages else None,
             "pdf_origin": str(pdf_origins[path]) if path in pdf_origins else None,
             "size": size,
             "sha256": _digest_file(path),
@@ -127,6 +131,8 @@ def load_project(source: Path, folder: Path, progress: Progress | None = None) -
             loaded = []
             labels = {}
             pdf_origins = {}
+            special_pages = {}
+            from special_pages import validate_special_spec
             for idx, record in enumerate(records, 1):
                 if not isinstance(record, dict):
                     raise ProjectError("Elemento del proyecto no válido")
@@ -140,7 +146,7 @@ def load_project(source: Path, folder: Path, progress: Progress | None = None) -
                         or info.file_size != record.get('size')):
                     raise ProjectError("El tamaño de alguna imagen no coincide")
                 kind = record.get('kind')
-                if kind not in ('image', 'pdf_page'):
+                if kind not in ('image', 'pdf_page', 'special_page'):
                     raise ProjectError("Tipo de elemento desconocido")
                 label = record.get('label')
                 if not isinstance(label, str) or len(label) > 300:
@@ -165,6 +171,11 @@ def load_project(source: Path, folder: Path, progress: Progress | None = None) -
                     raise ProjectError(f"No se puede abrir la imagen {idx}") from exc
                 loaded.append(path)
                 labels[path] = label
+                if kind == 'special_page':
+                    try:
+                        special_pages[path] = validate_special_spec(record.get('special'))
+                    except ValueError as exc:
+                        raise ProjectError('Página especial del proyecto no válida') from exc
                 if kind == 'pdf_page':
                     origin = record.get('pdf_origin')
                     if not isinstance(origin, str) or len(origin) > 1024:
@@ -187,6 +198,7 @@ def load_project(source: Path, folder: Path, progress: Progress | None = None) -
                 "pages": [loaded[i] for i in indices],
                 "labels": labels,
                 "pdf_origins": pdf_origins,
+                "special_pages": special_pages,
                 "settings": settings,
             }
     except (BadZipFile, OSError, json.JSONDecodeError, KeyError) as exc:

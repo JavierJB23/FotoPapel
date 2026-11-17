@@ -4,7 +4,7 @@ Dependencias: Pillow, reportlab y python-docx. No utiliza servicios web.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
@@ -62,6 +62,7 @@ class ExportOptions:
     # Una página de PDF importada ya está maquetada. No añadirle un segundo encaje.
     pdf_page_paths: frozenset[Path] = frozenset()
     photos_per_page: int = 1  # 1, 2, 4, 6 o 9; 1 conserva el funcionamiento de v1.3
+    special_pages: dict[Path, dict] = field(default_factory=dict)  # portadas, títulos, hojas en blanco
 
     def validate(self) -> None:
         if self.paper not in PAPER_SIZES:
@@ -76,6 +77,9 @@ class ExportOptions:
             raise ValueError("Márgenes de encuadernación no reconocidos")
         if self.photos_per_page not in (1, 2, 4, 6, 9):
             raise ValueError("Número de fotos por hoja no reconocido")
+        from special_pages import validate_special_spec
+        for spec in self.special_pages.values():
+            validate_special_spec(spec)
         if self.fmt not in ("Imagenes", "PDF", "Word"):
             raise ValueError("Formato de salida no reconocido")
 
@@ -397,11 +401,28 @@ def render_print_image(
         im.close()
 
 
-def page_groups(paths: Sequence[Path], per_page: int) -> list[tuple[Path, ...]]:
-    """Agrupa contenidos según el orden del usuario (no altera los originales)."""
+def page_groups(paths: Sequence[Path], per_page: int,
+                special_pages: dict[Path, dict] | None = None) -> list[tuple[Path, ...]]:
+    """Agrupa fotos, pero una portada/separador ocupa siempre su hoja entera."""
     if per_page not in (1, 2, 4, 6, 9):
         raise ValueError("Número de fotos por hoja no reconocido")
-    return [tuple(paths[i:i + per_page]) for i in range(0, len(paths), per_page)]
+    specials = special_pages or {}
+    groups: list[tuple[Path, ...]] = []
+    pending: list[Path] = []
+    for path in paths:
+        if path in specials:
+            if pending:
+                groups.append(tuple(pending))
+                pending.clear()
+            groups.append((path,))
+        else:
+            pending.append(path)
+            if len(pending) >= per_page:
+                groups.append(tuple(pending))
+                pending.clear()
+    if pending:
+        groups.append(tuple(pending))
+    return groups
 
 
 def _grid_shape(count: int, landscape: bool) -> tuple[int, int]:
@@ -540,6 +561,21 @@ def render_layout_page(
     opts.validate()
     if not paths:
         raise ValueError("La página no contiene fotografías")
+    if len(paths) == 1 and paths[0] in opts.special_pages:
+        from special_pages import render_special_page
+        w_mm, h_mm = dimensions_mm(paths[0], opts)
+        out_w, out_h = pixel_size(w_mm, h_mm, opts.dpi)
+        if preview_max_size is not None:
+            max_w, max_h = preview_max_size
+            if max_w <= 0 or max_h <= 0:
+                raise ValueError("Previsualización no válida")
+            scale = min(1.0, max_w/out_w, max_h/out_h)
+            out_w, out_h = max(1, round(out_w*scale)), max(1, round(out_h*scale))
+        safe = printable_box((out_w, out_h), (w_mm, h_mm),
+                             binding=opts.binding, page_index=page_index)
+        return render_special_page(opts.special_pages[paths[0]], (out_w, out_h), safe), (w_mm,h_mm), False
+    if any(path in opts.special_pages for path in paths):
+        raise ValueError("Las portadas y separadores deben ocupar una hoja completa")
     if opts.photos_per_page == 1:
         return render_print_image(paths[0], opts, preview_max_size=preview_max_size,
                                   page_index=page_index)
@@ -677,11 +713,11 @@ def export_images(paths: Sequence[Path], opts: ExportOptions, dest: Path, progre
     folder = _distinct_file(dest, f"Revelo_{label}_{datetime.now():%Y%m%d_%H%M%S}", "")
     folder.mkdir()
     lowres_count = 0
-    groups = page_groups(paths, opts.photos_per_page)
+    groups = page_groups(paths, opts.photos_per_page, opts.special_pages)
     for i, group in enumerate(groups, 1):
         rendered, _, lowres = render_layout_page(group, opts, page_index=i - 1)
         lowres_count += int(lowres)
-        if opts.photos_per_page == 1:
+        if opts.photos_per_page == 1 and group[0] not in opts.special_pages:
             out_base = _safe_basename(f"{i:02d}_{group[0].stem}_{label}")
             _save_original_format(rendered, folder / out_base, group[0], opts.dpi)
         else:
@@ -705,7 +741,7 @@ def export_pdf(paths: Sequence[Path], opts: ExportOptions, target: Path, progres
     document.setTitle(f"Revelo · {opts.paper}")
     lowres_count = 0
     try:
-        groups = page_groups(paths, opts.photos_per_page)
+        groups = page_groups(paths, opts.photos_per_page, opts.special_pages)
         for i, group in enumerate(groups, 1):
             rendered, (w_mm, h_mm), lowres = render_layout_page(group, opts, page_index=i - 1)
             lowres_count += int(lowres)
@@ -722,7 +758,8 @@ def export_pdf(paths: Sequence[Path], opts: ExportOptions, target: Path, progres
         # Guardar fuentes originales dentro de la copia PDF: futuras importaciones
         # pueden recuperar cada fotografía, sin confundirla con los fondos borrosos.
         from pdf_sources import attach_sources
-        attach_sources(target, list(paths), opts.photos_per_page, opts.pdf_page_paths)
+        attach_sources(target, list(paths), opts.photos_per_page, opts.pdf_page_paths,
+                       special_pages=opts.special_pages)
         if progress:
             progress(len(groups), len(groups), "Originales incluidos en el PDF")
     except Exception:
@@ -789,7 +826,7 @@ def export_word(paths: Sequence[Path], opts: ExportOptions, target: Path, progre
     style.paragraph_format.space_after = Pt(0)
     style.paragraph_format.line_spacing = Pt(1)
     lowres_count = 0
-    groups = page_groups(paths, opts.photos_per_page)
+    groups = page_groups(paths, opts.photos_per_page, opts.special_pages)
     for i, group in enumerate(groups, 1):
         rendered, (w_mm, h_mm), lowres = render_layout_page(group, opts, page_index=i - 1)
         lowres_count += int(lowres)

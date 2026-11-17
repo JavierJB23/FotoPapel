@@ -27,9 +27,15 @@ MAX_MANIFEST_BYTES = 4 * 1024 * 1024
 
 
 def _make_bundle(paths: list[Path], photos_per_page: int,
-                 pdf_page_paths: Collection[Path] = ()) -> bytes:
+                 pdf_page_paths: Collection[Path] = (), *,
+                 special_pages: dict[Path, dict] | None = None) -> bytes:
     if not paths or len(paths) > MAX_IMAGES:
         raise ValueError("Demasiadas imágenes para guardar sus originales en el PDF")
+    from processor import page_groups
+    from special_pages import validate_special_spec
+    special_pages = special_pages or {}
+    page_number = {path: n for n, group in enumerate(page_groups(paths, photos_per_page, special_pages))
+                   for path in group}
     items = []
     total = 0
     buffer = BytesIO()
@@ -81,7 +87,8 @@ def _make_bundle(paths: list[Path], photos_per_page: int,
             if size > MAX_SOURCE_BYTES:
                 raise ValueError("Una imagen recuperada es demasiado grande")
             items.append({"name": path.name[:180], "asset": key,
-                          "page": (index - 1) // photos_per_page,
+                          "page": page_number[path],
+                          "special": validate_special_spec(special_pages[path]) if path in special_pages else None,
                           "sha256": checksum.hexdigest(), "size": size,
                           "recovered_from_flat_pdf": path in pdf_page_paths})
         manifest = {"format": FORMAT_NAME, "version": FORMAT_VERSION,
@@ -91,7 +98,8 @@ def _make_bundle(paths: list[Path], photos_per_page: int,
 
 
 def attach_sources(pdf_path: Path, paths: list[Path], photos_per_page: int,
-                   pdf_page_paths: Collection[Path] = ()) -> None:
+                   pdf_page_paths: Collection[Path] = (), *,
+                   special_pages: dict[Path, dict] | None = None) -> None:
     """Inserta fuentes originales en un PDF sin modificar sus páginas visibles.
 
     Operación segura: el PDF existente solo se sustituye si la copia revisada
@@ -100,7 +108,7 @@ def attach_sources(pdf_path: Path, paths: list[Path], photos_per_page: int,
     from pypdf import PdfReader, PdfWriter
 
     pdf_path = Path(pdf_path)
-    content = _make_bundle(paths, photos_per_page, pdf_page_paths)
+    content = _make_bundle(paths, photos_per_page, pdf_page_paths, special_pages=special_pages)
     writer = PdfWriter()
     reader = PdfReader(str(pdf_path), strict=False)
     writer.append(reader)
@@ -124,8 +132,8 @@ def attach_sources(pdf_path: Path, paths: list[Path], photos_per_page: int,
             tmp.unlink(missing_ok=True)
 
 
-def recover_sources(pdf_path: Path, folder: Path, progress=None):
-    """Devuelve (paths, pages, per_sheet) si el PDF incluye originales Revelo.
+def recover_sources(pdf_path: Path, folder: Path, progress=None, *, include_specials: bool = False):
+    """Devuelve (paths, pages, per_sheet); opcionalmente también portadas.
 
     Si no hay adjunto devuelve None, para permitir importación clásica. Los
     límites de tamaño y nombres impiden la extracción de rutas externas.
@@ -162,6 +170,8 @@ def recover_sources(pdf_path: Path, folder: Path, progress=None):
                     or photos_per_page not in (1, 2, 4, 6, 9)
                     or len(info) != len(items) + 1):
                 raise ValueError("El índice de originales del PDF no es válido")
+            from special_pages import validate_special_spec
+            special_specs = []
             for idx, item in enumerate(items, 1):
                 if not isinstance(item, dict):
                     raise ValueError("Entrada de fotografía no válida")
@@ -175,10 +185,17 @@ def recover_sources(pdf_path: Path, folder: Path, progress=None):
                 size = item.get("size")
                 checksum = item.get("sha256")
                 page = item.get("page")
+                special = item.get("special")
+                if special is not None:
+                    try:
+                        special = validate_special_spec(special)
+                    except ValueError as exc:
+                        raise ValueError("Portada del PDF no válida") from exc
+                special_specs.append(special)
                 if (not isinstance(size, int) or size != entry.file_size
                         or size > MAX_SOURCE_BYTES or size < 1
                         or not isinstance(checksum, str) or len(checksum) != 64
-                        or not isinstance(page, int) or page != (idx - 1) // photos_per_page
+                        or not isinstance(page, int) or page < 0
                         or page >= len(pdf.pages)):
                     raise ValueError("Los originales del PDF no coinciden con su índice")
                 total += size
@@ -200,12 +217,22 @@ def recover_sources(pdf_path: Path, folder: Path, progress=None):
                 items_out.append(dest)
                 if progress:
                     progress(idx, len(items), pdf_path.name)
+        # Verifica que los índices de página coinciden con la agrupación,
+        # incluidas las portadas que fuerzan una hoja completa.
+        from processor import page_groups
+        specs = {path: spec for path, spec in zip(items_out, special_specs) if spec is not None}
+        expected = {path: n for n, group in enumerate(page_groups(items_out, photos_per_page, specs))
+                    for path in group}
+        if any(expected[path] != item["page"] for path, item in zip(items_out, items)):
+            raise ValueError("El orden de páginas del PDF no coincide con sus originales")
         # Cada foto conserva la dimensión de papel de la hoja que la alojaba.
         sizes = []
         for item in items:
             page = pdf.pages[item["page"]]
             sizes.append((float(page.mediabox.width) * 25.4 / 72,
                           float(page.mediabox.height) * 25.4 / 72))
+        if include_specials:
+            return items_out, sizes, photos_per_page, specs
         return items_out, sizes, photos_per_page
     except (ValueError, OSError, BadZipFile, json.JSONDecodeError, KeyError):
         for file in staged:

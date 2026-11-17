@@ -23,6 +23,7 @@ from pdf_import import import_pdf_pages, matched_paper
 from pdf_sources import recover_sources
 from mobile_import import PhoneTransferServer
 from project_io import save_project, load_project, ProjectError
+from special_pages import KINDS, THEMES, validate_special_spec, save_special_thumbnail
 import qrcode
 
 APP_NAME = "Revelo"
@@ -86,6 +87,8 @@ class ReveloApp:
         self.pdf_origins: dict[Path, Path] = {}
         self.recovered_pdf_sources: set[Path] = set()
         self.pdf_temp = tempfile.TemporaryDirectory(prefix="Revelo_PDF_")
+        self.special_temp = tempfile.TemporaryDirectory(prefix="Revelo_Paginas_")
+        self.special_pages: dict[Path, dict] = {}
         self.mobile_temp = tempfile.TemporaryDirectory(prefix="Revelo_Movil_")
         self.project_temp = tempfile.TemporaryDirectory(prefix="Revelo_Proyecto_")
         self.project_path: Path | None = None
@@ -274,10 +277,14 @@ class ReveloApp:
         files_row.pack(fill="x")
         self.add_btn = self._button(files_row, "+ Añadir fotos / PDF", self.add_photos, accent=True, small=True)
         self.add_btn.pack(side="left", padx=(0, 7))
-        self.clear_btn = self._button(files_row, "Vaciar", self.clear, small=True)
+        self.special_btn = self._button(files_row, "+ Página", self.special_page_dialog, small=True)
+        self.special_btn.pack(side="left", padx=(0, 7))
+        lower_buttons = tk.Frame(buttons, bg=SURFACE)
+        lower_buttons.pack(fill="x", pady=(7,0))
+        self.mobile_btn = self._button(lower_buttons, "Importar desde móvil  ·  QR", self.open_mobile_import, small=True)
+        self.mobile_btn.pack(side="left", fill="x", expand=True, padx=(0,7))
+        self.clear_btn = self._button(lower_buttons, "Vaciar", self.clear, small=True)
         self.clear_btn.pack(side="left")
-        self.mobile_btn = self._button(buttons, "Importar desde móvil  ·  QR", self.open_mobile_import, small=True)
-        self.mobile_btn.pack(fill="x", pady=(7, 0))
         tk.Frame(left_panel, height=1, bg=BORDER).pack(fill="x")
         self.library_area = ScrollingArea(left_panel)
         self.library_area.pack(fill="both", expand=True, padx=9, pady=9)
@@ -342,15 +349,122 @@ class ReveloApp:
             per_sheet = int(self.per_sheet.get())
             self.layout_info.set("Una fotografía por hoja" if per_sheet == 1
                                  else f"{per_sheet} fotos por hoja · PDF/Word/PNG")
-            self.page_count_var.set(f"{len(self.pages)} elementos · {math.ceil(len(self.pages) / per_sheet)} hojas")
+            self.page_count_var.set(f"{len(self.pages)} elementos · {len(page_groups(self.pages, per_sheet, self.special_pages))} hojas")
         except (ValueError, ZeroDivisionError):
             pass
         if self.preview_window is not None and self.preview_window.winfo_exists():
-            self.preview_index = min(self.preview_index, max(0, math.ceil(len(self.pages) / int(self.per_sheet.get())) - 1))
+            self.preview_index = min(self.preview_index, max(0, len(self._groups()) - 1))
             self._show_preview_page()
 
     def _on_per_sheet_changed(self, *_):
         self.render_order()
+
+    def _groups(self) -> list[tuple[Path, ...]]:
+        return page_groups(self.pages, int(self.per_sheet.get()), self.special_pages)
+
+    def special_page_dialog(self, path: Path | None = None):
+        """Crea o edita portadas, separadores y hojas vacías."""
+        if self.is_busy:
+            return
+        old = self.special_pages.get(path) if path is not None else None
+        kind = tk.StringVar(value=old["kind"] if old else "Separador")
+        title = tk.StringVar(value=old["title"] if old else "")
+        subtitle = tk.StringVar(value=old["subtitle"] if old else "")
+        theme = tk.StringVar(value=old["theme"] if old else "Crema")
+        window = tk.Toplevel(self.root)
+        window.title("Revelo · " + ("Editar página" if old else "Añadir página"))
+        self.root.update_idletasks()
+        win_w, win_h = 510, 540
+        x = max(0, self.root.winfo_rootx() + (self.root.winfo_width()-win_w)//2)
+        y = max(0, self.root.winfo_rooty() + (self.root.winfo_height()-win_h)//2)
+        window.geometry(f"{win_w}x{win_h}+{x}+{y}")
+        window.resizable(False, False)
+        window.configure(bg=BG)
+        window.transient(self.root)
+        window.grab_set()
+        try:
+            ico = app_asset("icono.ico")
+            if sys.platform == "win32" and ico.exists():
+                window.iconbitmap(str(ico))
+        except tk.TclError:
+            pass
+        content = tk.Frame(window, bg=BG, padx=28, pady=23)
+        content.pack(fill="both", expand=True)
+        self._label(content, "EDITAR PÁGINA" if old else "CREAR PÁGINA", weight="bold", size=17).pack(anchor="w")
+        self._label(content, "Incluye portadas, capítulos y hojas en blanco en el orden que elijas.",
+                    color=MUTED, size=9).pack(anchor="w", pady=(6,15))
+
+        def select(caption, variable, choices):
+            self._label(content, caption, weight="bold", color=MUTED, size=9).pack(anchor="w", pady=(7,4))
+            combo = ttk.Combobox(content, textvariable=variable, values=choices, state="readonly",
+                                 style="Custom.TCombobox")
+            combo.pack(fill="x")
+            return combo
+        select("TIPO DE PÁGINA", kind, list(KINDS))
+        self._label(content, "TÍTULO", weight="bold", color=MUTED, size=9).pack(anchor="w", pady=(10,4))
+        title_input = tk.Entry(content, textvariable=title, bg=SURFACE_2, fg=TEXT,
+                               font=("Segoe UI", 11), insertbackground=ACCENT, relief="flat")
+        title_input.pack(fill="x", ipady=7)
+        self._label(content, "SUBTÍTULO (OPCIONAL)", weight="bold", color=MUTED, size=9).pack(anchor="w", pady=(10,4))
+        subtitle_input = tk.Entry(content, textvariable=subtitle, bg=SURFACE_2, fg=TEXT,
+                                  font=("Segoe UI", 11), insertbackground=ACCENT, relief="flat")
+        subtitle_input.pack(fill="x", ipady=7)
+        select("COLOR DE FONDO", theme, list(THEMES))
+        note = self._label(content, "Las portadas y separadores ocupan siempre una hoja completa.",
+                           color=MUTED, size=9)
+        note.pack(anchor="w", pady=(10,0))
+        controls = tk.Frame(content, bg=BG)
+        controls.pack(side="bottom", fill="x", pady=(16,0))
+        self._button(controls, "Cancelar", window.destroy, small=True).pack(side="right")
+
+        def update_kind(*_):
+            state = "disabled" if kind.get() == "Página en blanco" else "normal"
+            title_input.configure(state=state)
+            subtitle_input.configure(state=state)
+        kind.trace_add("write", update_kind)
+        update_kind()
+
+        def create():
+            try:
+                spec = validate_special_spec({"kind": kind.get(), "title": title.get(),
+                                              "subtitle": subtitle.get(), "theme": theme.get()})
+            except ValueError as exc:
+                messagebox.showwarning("Página especial", str(exc), parent=window)
+                return
+            new = path is None
+            candidate = (Path(self.special_temp.name) / f"pagina_{uuid.uuid4().hex}.png") if new else path
+            landscape = self.orientation.get() == "Horizontal"
+            if self.orientation.get() == "Automática" and self.pages and new:
+                sw, sh = self.details.get(self.pages[0], (1,2))
+                landscape = sw > sh
+            if not new:
+                sw, sh = self.details.get(path, (1,2))
+                landscape = sw > sh
+            try:
+                save_special_thumbnail(candidate, spec, landscape=landscape)
+                self.thumbnails.pop(candidate, None)
+                self.thumbnails_small.pop(candidate, None)
+                self._thumbnail(candidate)
+            except Exception as exc:
+                messagebox.showerror("Página especial", str(exc), parent=window)
+                return
+            self.special_pages[candidate] = spec
+            self.path_labels[candidate] = ("Página en blanco" if spec["kind"] == "Página en blanco"
+                                           else f"{spec['kind']}: {spec['title']}")
+            self.details[candidate] = source_dimensions(candidate)
+            if new:
+                self.paths.append(candidate)
+                if self.selected in self.pages:
+                    self.pages.insert(self.pages.index(self.selected)+1, candidate)
+                else:
+                    self.pages.append(candidate)
+            self.selected = candidate
+            self.render_library()
+            self.render_order()
+            self.feedback.set("Página preparada. Puedes cambiar su posición o editarla.")
+            window.destroy()
+        self._button(controls, "Guardar página", create, small=True, accent=True).pack(side="right", padx=(0,9))
+        title_input.focus_set()
 
     def _thumbnail(self, path: Path) -> ImageTk.PhotoImage:
         if path not in self.thumbnails:
@@ -490,6 +604,7 @@ class ReveloApp:
             errors = []
             detected_paper = None
             mixed_pdf = False
+            recovered_specials = {}
             seen = set()
             for source in selected:
                 if source in seen:
@@ -502,14 +617,16 @@ class ReveloApp:
                     try:
                         progress = lambda i, n, name: self.updates.put(("import_progress", i, n, name))
                         try:
-                            originals = recover_sources(source, temp_dir, progress=progress)
+                            originals = recover_sources(source, temp_dir, progress=progress,
+                                                        include_specials=True)
                         except Exception:
                             # Si un lector elimina o altera el adjunto interno,
                             # el PDF debe seguir pudiendo abrirse como páginas.
                             originals = None
                             errors.append(f"{source.name}: no se recuperaron originales adjuntos; se leerán sus páginas como imágenes")
                         if originals is not None:
-                            images, sizes, per_sheet = originals
+                            images, sizes, per_sheet, recovered_specs = originals
+                            recovered_specials.update(recovered_specs)
                             # Las fotos recuperadas son originales: NO se deben
                             # marcar como página PDF ni intentar quitarles un fondo.
                             paper, has_mixed = matched_paper(sizes)
@@ -518,7 +635,10 @@ class ReveloApp:
                             mixed_pdf = mixed_pdf or has_mixed
                             for number, image in enumerate(images, 1):
                                 dims = source_dimensions(image)
-                                items.append((image, dims, f"{source.name} · foto original {number}", None))
+                                spec = recovered_specs.get(image)
+                                label = (f"{spec['kind']}: {spec['title']}" if spec and spec['title']
+                                         else "Página en blanco" if spec else f"{source.name} · foto original {number}")
+                                items.append((image, dims, label, None))
                             self.updates.put(("pdf_recovered", source, len(images), per_sheet))
                         else:
                             images, sizes = import_pdf_pages(source, temp_dir, progress=progress)
@@ -540,11 +660,12 @@ class ReveloApp:
                         errors.append(f"{source.name}: no se pudo leer ({error})")
                 else:
                     errors.append(f"{source.name}: formato no admitido")
-            self.updates.put(("import_done", items, detected_paper, mixed_pdf, errors))
+            self.updates.put(("import_done", items, detected_paper, mixed_pdf, errors,
+                              recovered_specials))
 
         threading.Thread(target=do_import, daemon=True).start()
 
-    def _finish_import(self, items, detected_paper, mixed_pdf, errors):
+    def _finish_import(self, items, detected_paper, mixed_pdf, errors, specials=None):
         was_empty = not self.paths
         count = 0
         for path, dims, label, origin in items:
@@ -555,6 +676,8 @@ class ReveloApp:
                 continue
             self.details[path] = dims
             self.path_labels[path] = label
+            if path in (specials or {}):
+                self.special_pages[path] = specials[path]
             if origin is not None:
                 self.pdf_origins[path] = origin
             self.paths.append(path)
@@ -584,6 +707,7 @@ class ReveloApp:
         self.details.pop(path, None)
         self.path_labels.pop(path, None)
         self.pdf_origins.pop(path, None)
+        self.special_pages.pop(path, None)
         if self.selected == path:
             self.selected = None
         self.render_library()
@@ -601,6 +725,7 @@ class ReveloApp:
             self.details.clear()
             self.path_labels.clear()
             self.pdf_origins.clear()
+            self.special_pages.clear()
             self.selected = None
             self.render_library()
             self.render_order()
@@ -629,7 +754,7 @@ class ReveloApp:
         self.count_var.set(f"{len(self.paths)} elemento{'s' if len(self.paths) != 1 else ''}")
         if not self.paths:
             self._label(self.library_area.inner,
-                        "Tus fotos y páginas PDF aparecerán aquí.\n\nPulsa «Añadir fotos / PDF» para elegir archivos.\nAdmite JPG, PNG, HEIC, WEBP, TIFF y PDF.",
+                        "Tus fotos y páginas PDF aparecerán aquí.\n\nAñade fotos, PDF o una portada o separador.",
                         color=MUTED, size=12, justify="center").pack(pady=115)
             return
         for column in range(self.library_cols):
@@ -650,7 +775,7 @@ class ReveloApp:
             lbl = self._label(card, name, size=10, weight="bold", bg=SURFACE_2, anchor="w")
             lbl.pack(fill="x", pady=(6, 0))
             w, h = self.details[path]
-            kind = "PDF" if path in self.pdf_origins else path.suffix[1:].upper()
+            kind = "PÁGINA" if path in self.special_pages else ("PDF" if path in self.pdf_origins else path.suffix[1:].upper())
             meta = self._label(card, f"{w} × {h} px  ·  {kind}",
                                size=9, color=MUTED, bg=SURFACE_2, anchor="w")
             meta.pack(fill="x", pady=(2, 0))
@@ -659,6 +784,9 @@ class ReveloApp:
                                activebackground="#5B3444", activeforeground=TEXT,
                                borderwidth=0, padx=5, pady=0, cursor="hand2")
             remove.place(relx=1, x=-3, y=3, anchor="ne")
+            if path in self.special_pages:
+                self._button(card, "Editar página", lambda p=path: self.special_page_dialog(p),
+                             small=True).pack(fill="x", pady=(6,0))
             for part in (card, thumb, lbl, meta):
                 self._make_draggable(part, path)
             self.library_area.bind_wheel_recursive(card)
@@ -672,7 +800,9 @@ class ReveloApp:
 
     def render_order(self):
         per_sheet = int(self.per_sheet.get())
-        self.page_count_var.set(f"{len(self.pages)} elementos · {math.ceil(len(self.pages) / per_sheet)} hojas")
+        groups = self._groups()
+        sheet_number = {path: i + 1 for i, group in enumerate(groups) for path in group}
+        self.page_count_var.set(f"{len(self.pages)} elementos · {len(groups)} hojas")
         if not self.pages:
             self._show_empty_order()
             return
@@ -697,7 +827,8 @@ class ReveloApp:
             name = self._label(text_box, short, weight="bold", size=10, bg=SURFACE_2, anchor="w")
             name.pack(fill="x")
             dim = self.details.get(path, (0, 0))
-            sub = self._label(text_box, f"Hoja {idx // per_sheet + 1}  ·  {dim[0]} × {dim[1]} px",
+            sub = self._label(text_box, (f"Hoja {sheet_number[path]} · página independiente" if path in self.special_pages
+                                         else f"Hoja {sheet_number[path]}  ·  {dim[0]} × {dim[1]} px"),
                               color=MUTED, size=9, bg=SURFACE_2, anchor="w")
             sub.pack(fill="x", pady=(3, 0))
             arrows = tk.Frame(slot, bg=SURFACE_2)
@@ -813,6 +944,7 @@ class ReveloApp:
             binding=self.binding.get() == "Sí",
             pdf_page_paths=frozenset(self.pdf_origins),
             photos_per_page=int(self.per_sheet.get()),
+            special_pages=dict(self.special_pages),
         )
 
     def open_preview(self):
@@ -885,7 +1017,7 @@ class ReveloApp:
         if not self.pages:
             self._close_preview()
             return
-        total = len(page_groups(self.pages, int(self.per_sheet.get())))
+        total = len(self._groups())
         new_index = max(0, min(total - 1, self.preview_index + step))
         if new_index != self.preview_index:
             self.preview_index = new_index
@@ -897,7 +1029,7 @@ class ReveloApp:
         if not self.pages:
             self._close_preview()
             return
-        groups = page_groups(self.pages, int(self.per_sheet.get()))
+        groups = self._groups()
         self.preview_index = min(self.preview_index, len(groups) - 1)
         group = groups[self.preview_index]
         path = group[0]
@@ -1042,11 +1174,13 @@ class ReveloApp:
         self.percent_text.set("(0 %)")
         paths, pages = self.paths.copy(), self.pages.copy()
         labels, origins, settings = dict(self.path_labels), dict(self.pdf_origins), self._project_settings()
+        special = dict(self.special_pages)
 
         def worker():
             try:
                 save_project(target, paths, pages, labels, origins, settings,
-                             progress=lambda n, total: self.updates.put(("project_progress", n, total, "Guardando")))
+                             progress=lambda n, total: self.updates.put(("project_progress", n, total, "Guardando")),
+                             special_pages=special)
                 self.updates.put(("project_saved", target))
             except Exception as exc:
                 self.updates.put(("project_error", str(exc)))
@@ -1088,6 +1222,7 @@ class ReveloApp:
         self.pages = loaded["pages"]
         self.path_labels = loaded["labels"]
         self.pdf_origins = loaded["pdf_origins"]
+        self.special_pages = loaded.get("special_pages", {})
         self.recovered_pdf_sources.clear()
         self.thumbnails.clear()
         self.thumbnails_small.clear()
@@ -1198,8 +1333,8 @@ class ReveloApp:
                     self.recovered_pdf_sources.add(source.resolve())
                     self.feedback.set(f"PDF reversible: recuperadas {count} fotografías originales de {source.name}")
                 elif event[0] == "import_done":
-                    _, items, detected_paper, mixed_pdf, errors = event
-                    self._finish_import(items, detected_paper, mixed_pdf, errors)
+                    _, items, detected_paper, mixed_pdf, errors, special = event
+                    self._finish_import(items, detected_paper, mixed_pdf, errors, special)
                     self.progress["value"] = 0
                     self.percent_text.set("(0 %)")
                 elif event[0] == "project_progress":
@@ -1243,7 +1378,7 @@ class ReveloApp:
                     self.percent_text.set("(100 %)")
                     self.output_path = Path(result)
                     self.open_btn.configure(state="normal")
-                    sheet_count = math.ceil(count / int(self.per_sheet.get()))
+                    sheet_count = len(self._groups())
                     self.feedback.set(f"✓ {sheet_count} hoja(s) exportadas. Resultado: {self.output_path.name}")
                     self._show_export_completed(Path(result), sheet_count, count, warning_count)
                 elif event[0] == "error":
@@ -1270,6 +1405,7 @@ class ReveloApp:
         self.mobile_temp.cleanup()
         self.pdf_temp.cleanup()
         self.project_temp.cleanup()
+        self.special_temp.cleanup()
         self.root.destroy()
 
     def open_result(self):
