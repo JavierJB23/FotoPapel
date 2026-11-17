@@ -1,0 +1,36 @@
+name: Crear EXE de FotoPapel
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+
+jobs:
+  generar-exe:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Descargar proyecto
+        uses: actions/checkout@v4
+      - name: Instalar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Instalar componentes gratuitos
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: Compilar FotoPapel.exe
+        shell: pwsh
+        run: |
+          python -m PyInstaller --noconfirm --clean --onefile --windowed --name FotoPapel --icon icono.ico --collect-submodules PIL --collect-submodules reportlab main.py
+      - name: Publicar EXE descargable
+        uses: actions/upload-artifact@v4
+        with:
+          name: FotoPapel-Windows-EXE
+          path: dist/FotoPapel.exe
+          if-no-files-found: error
+          retention-days: 30
