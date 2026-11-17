@@ -19,6 +19,8 @@ from processor import (
     pixel_size, source_dimensions,
 )
 from pdf_import import import_pdf_pages, matched_paper
+from mobile_import import PhoneTransferServer
+import qrcode
 
 APP_NAME = "Revelo"
 BG = "#0B1422"
@@ -72,7 +74,7 @@ class ScrollingArea(tk.Frame):
 class ReveloApp:
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("Revelo v1.2.4 · Fotos y PDF listos para imprimir")
+        self.root.title("Revelo · Fotos y PDF listos para imprimir")
         self.root.geometry("1270x845")
         self.root.minsize(940, 650)
         self.root.configure(bg=BG)
@@ -80,6 +82,13 @@ class ReveloApp:
         self.path_labels: dict[Path, str] = {}
         self.pdf_origins: dict[Path, Path] = {}
         self.pdf_temp = tempfile.TemporaryDirectory(prefix="Revelo_PDF_")
+        self.mobile_temp = tempfile.TemporaryDirectory(prefix="Revelo_Movil_")
+        self.mobile_server: PhoneTransferServer | None = None
+        self.mobile_window: tk.Toplevel | None = None
+        self.mobile_qr: ImageTk.PhotoImage | None = None
+        self.mobile_status = tk.StringVar(value="Esperando fotografías…")
+        self.mobile_received_count = 0
+        self.pending_mobile: list[Path] = []
         self.pages: list[Path] = []
         self.thumbnails: dict[Path, ImageTk.PhotoImage] = {}
         self.thumbnails_small: dict[Path, ImageTk.PhotoImage] = {}
@@ -163,14 +172,13 @@ class ReveloApp:
         header.pack(fill="x")
         left = tk.Frame(header, bg=BG)
         left.pack(side="left", fill="x", expand=True)
-        tk.Label(left, text="R", font=("Segoe UI", 25, "bold"), fg=BG, bg=ACCENT,
-                 width=2, height=1).pack(side="left", padx=(0, 14))
+        with Image.open(app_asset("logo_cabecera.png")) as logo:
+            self.header_icon = ImageTk.PhotoImage(logo.convert("RGBA").resize((59, 59), Image.Resampling.LANCZOS))
+        tk.Label(left, image=self.header_icon, bg=BG, borderwidth=0).pack(side="left", padx=(0, 14))
         htext = tk.Frame(left, bg=BG)
         htext.pack(side="left")
         self._label(htext, "Revelo", size=23, weight="bold").pack(anchor="w")
-        self._label(htext, "Tus fotos y documentos, listos para imprimir  ·  v1.2.4", color=MUTED, size=10).pack(anchor="w")
-        self._label(header, "100 % LOCAL  ·  SIN SUBIR FOTOS A INTERNET", color=ACCENT, size=9,
-                    weight="bold").pack(side="right")
+        self._label(htext, "Tus fotos y documentos, listos para imprimir", color=MUTED, size=10).pack(anchor="w")
 
         setting_outer = tk.Frame(self.root, bg=BG, padx=24)
         setting_outer.pack(fill="x")
@@ -246,16 +254,20 @@ class ReveloApp:
         self._label(title, "0 fotos", textvariable=self.count_var, size=10, color=MUTED).pack(anchor="w", pady=(3, 0))
         buttons = tk.Frame(library_top, bg=SURFACE)
         buttons.pack(side="right")
-        self.add_btn = self._button(buttons, "+ Añadir fotos / PDF", self.add_photos, accent=True, small=True)
+        files_row = tk.Frame(buttons, bg=SURFACE)
+        files_row.pack(fill="x")
+        self.add_btn = self._button(files_row, "+ Añadir fotos / PDF", self.add_photos, accent=True, small=True)
         self.add_btn.pack(side="left", padx=(0, 7))
-        self.clear_btn = self._button(buttons, "Vaciar", self.clear, small=True)
+        self.clear_btn = self._button(files_row, "Vaciar", self.clear, small=True)
         self.clear_btn.pack(side="left")
+        self.mobile_btn = self._button(buttons, "Importar desde móvil  ·  QR", self.open_mobile_import, small=True)
+        self.mobile_btn.pack(fill="x", pady=(7, 0))
         tk.Frame(left_panel, height=1, bg=BORDER).pack(fill="x")
         self.library_area = ScrollingArea(left_panel)
         self.library_area.pack(fill="both", expand=True, padx=9, pady=9)
         self.library_area.canvas.bind("<Configure>", self._on_library_resize, add="+")
         self.library_placeholder = self._label(
-            self.library_area.inner, "Tus fotos y páginas PDF aparecerán aquí.\n\nPulsa «Añadir fotos / PDF» para elegir archivos.\nAdmite JPG, PNG, WEBP, TIFF, BMP y PDF.",
+            self.library_area.inner, "Tus fotos y páginas PDF aparecerán aquí.\n\nPulsa «Añadir fotos / PDF» para elegir archivos.\nAdmite JPG, PNG, HEIC, WEBP, TIFF y PDF.",
             color=MUTED, size=12, justify="center",
         )
         self.library_placeholder.pack(pady=115)
@@ -326,14 +338,91 @@ class ReveloApp:
             return
         names = filedialog.askopenfilenames(
             title="Selecciona fotos o documentos PDF", filetypes=[
-                ("Fotos y PDF", "*.jpg *.jpeg *.png *.webp *.tif *.tiff *.bmp *.pdf"),
+                ("Fotos y PDF", "*.jpg *.jpeg *.png *.webp *.tif *.tiff *.bmp *.heic *.heif *.pdf"),
                 ("Documentos PDF", "*.pdf"),
-                ("Imágenes", "*.jpg *.jpeg *.png *.webp *.tif *.tiff *.bmp"),
+                ("Imágenes", "*.jpg *.jpeg *.png *.webp *.tif *.tiff *.bmp *.heic *.heif"),
                 ("Todos los archivos", "*.*"),
             ],
         )
         if names:
             self.import_paths([Path(f) for f in names])
+
+    def open_mobile_import(self):
+        """Muestra el QR para seleccionar y enviar fotos desde un móvil en la LAN."""
+        if self.mobile_window is not None and self.mobile_window.winfo_exists():
+            self.mobile_window.lift()
+            self.mobile_window.focus_force()
+            return
+        try:
+            self.mobile_server = PhoneTransferServer(
+                Path(self.mobile_temp.name),
+                lambda path: self.updates.put(("mobile_received", path)),
+            )
+        except (OSError, RuntimeError) as exc:
+            messagebox.showerror("Importar desde móvil", str(exc))
+            return
+        window = tk.Toplevel(self.root)
+        self.mobile_window = window
+        window.title("Revelo · Importar desde móvil")
+        window.geometry("510x690")
+        window.minsize(455, 605)
+        window.configure(bg=BG)
+        try:
+            ico = app_asset("icono.ico")
+            if sys.platform == "win32" and ico.exists():
+                window.iconbitmap(str(ico))
+        except tk.TclError:
+            pass
+        self.mobile_received_count = 0
+        self.mobile_status.set("Esperando fotografías desde el móvil…")
+        outer = tk.Frame(window, bg=BG, padx=25, pady=20)
+        outer.pack(fill="both", expand=True)
+        self._label(outer, "IMPORTAR DESDE MÓVIL", size=17, weight="bold").pack(anchor="w")
+        self._label(outer, "1. Conecta el iPhone y el ordenador a la misma red doméstica.",
+                    size=10, color=MUTED).pack(anchor="w", pady=(10, 5))
+        self._label(outer, "2. Escanea este código con la cámara del móvil.",
+                    size=10, color=MUTED).pack(anchor="w", pady=(0, 14))
+
+        qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M,
+                           box_size=10, border=4)
+        qr.add_data(self.mobile_server.url)
+        qr.make(fit=True)
+        raw = qr.make_image(fill_color="#102234", back_color="white").convert("RGB")
+        raw = raw.resize((330, 330), Image.Resampling.NEAREST)
+        self.mobile_qr = ImageTk.PhotoImage(raw)
+        tk.Label(outer, image=self.mobile_qr, bg="white", padx=8, pady=8,
+                 borderwidth=0).pack(anchor="center")
+        self._label(outer, "3. Selecciona varias fotos y pulsa «Enviar fotos».",
+                    color=MUTED, size=10).pack(anchor="w", pady=(14, 7))
+        self._label(outer, "", textvariable=self.mobile_status, color=ACCENT,
+                    size=11, weight="bold", anchor="w").pack(fill="x")
+        self._label(outer, "Sin nube ni instalación en el móvil. Las fotos originales se conservan.",
+                    size=9, color=MUTED, wraplength=440, justify="left").pack(anchor="w", pady=(12, 0))
+        self._label(outer, "Si Windows solicita permiso, permite Revelo solo en redes privadas.",
+                    size=9, color=WARNING, wraplength=440, justify="left").pack(anchor="w", pady=(4, 0))
+        bottom = tk.Frame(outer, bg=BG)
+        bottom.pack(side="bottom", fill="x", pady=(12, 0))
+        self._button(bottom, "Cerrar QR", self._close_mobile_import, small=True).pack(side="right")
+        self._button(bottom, "Copiar enlace", self._copy_mobile_url, small=True).pack(side="left")
+        window.protocol("WM_DELETE_WINDOW", self._close_mobile_import)
+
+    def _copy_mobile_url(self):
+        if self.mobile_server is None:
+            return
+        self.root.clipboard_clear()
+        self.root.clipboard_append(self.mobile_server.url)
+        self.root.update_idletasks()
+        self.mobile_status.set("Enlace copiado. Ábrelo desde el móvil conectado a la misma red.")
+
+    def _close_mobile_import(self):
+        if self.mobile_server is not None:
+            server = self.mobile_server
+            self.mobile_server = None
+            server.stop()
+        if self.mobile_window is not None and self.mobile_window.winfo_exists():
+            self.mobile_window.destroy()
+        self.mobile_window = None
+        self.mobile_qr = None
 
     def _set_busy(self, active: bool):
         self.is_busy = active
@@ -487,7 +576,7 @@ class ReveloApp:
         self.count_var.set(f"{len(self.paths)} elemento{'s' if len(self.paths) != 1 else ''}")
         if not self.paths:
             self._label(self.library_area.inner,
-                        "Tus fotos y páginas PDF aparecerán aquí.\n\nPulsa «Añadir fotos / PDF» para elegir archivos.\nAdmite JPG, PNG, WEBP, TIFF, BMP y PDF.",
+                        "Tus fotos y páginas PDF aparecerán aquí.\n\nPulsa «Añadir fotos / PDF» para elegir archivos.\nAdmite JPG, PNG, HEIC, WEBP, TIFF y PDF.",
                         color=MUTED, size=12, justify="center").pack(pady=115)
             return
         for column in range(self.library_cols):
@@ -863,7 +952,12 @@ class ReveloApp:
         try:
             while True:
                 event = self.updates.get_nowait()
-                if event[0] == "import_progress":
+                if event[0] == "mobile_received":
+                    self.pending_mobile.append(event[1])
+                    self.mobile_received_count += 1
+                    self.mobile_status.set(f"✓ {self.mobile_received_count} foto(s) recibidas del móvil")
+                    self.feedback.set(f"Recibidas {self.mobile_received_count} foto(s) del móvil. Añadiendo a Revelo…")
+                elif event[0] == "import_progress":
                     _, current, total, name = event
                     percent = round(100 * current / total)
                     self.progress["value"] = percent
@@ -902,6 +996,10 @@ class ReveloApp:
                     messagebox.showerror("Error al exportar", event[1])
         except queue.Empty:
             pass
+        if self.pending_mobile and not self.is_busy:
+            batch = self.pending_mobile[:]
+            self.pending_mobile.clear()
+            self.import_paths(batch)
         self.root.after(120, self._poll)
 
     def _on_close(self):
@@ -909,6 +1007,8 @@ class ReveloApp:
             messagebox.showinfo("Operación en curso", "Termina de importar o exportar antes de cerrar Revelo.")
             return
         self._close_preview()
+        self._close_mobile_import()
+        self.mobile_temp.cleanup()
         self.pdf_temp.cleanup()
         self.root.destroy()
 

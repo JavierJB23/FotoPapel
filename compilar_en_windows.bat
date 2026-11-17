@@ -2,7 +2,7 @@
 setlocal
 cd /d "%~dp0"
 echo.
-echo FOTO PAPEL - COMPILACION WINDOWS
+echo REVELO v1.2 - COMPILACION WINDOWS
 where py >nul 2>nul
 if %ERRORLEVEL%==0 (
   set "PYTHON=py"
@@ -16,9 +16,9 @@ if errorlevel 1 (
   exit /b 1
 )
 %PYTHON% -m pip install -r requirements.txt || goto error
-%PYTHON% -m PyInstaller --noconfirm --clean --onefile --windowed --name FotoPapel --icon icono.ico --collect-submodules PIL --collect-submodules reportlab main.py || goto error
+%PYTHON% -m PyInstaller --noconfirm --clean --onefile --windowed --name Revelo --icon icono.ico --collect-submodules PIL --collect-submodules reportlab --collect-all pypdfium2 --collect-all pillow_heif --collect-all qrcode --add-data "icono.ico;." --add-data "logo_cabecera.png;." main.py || goto error
 echo.
-echo LISTO: El programa esta en dist\FotoPapel.exe
+echo LISTO: El programa esta en dist\Revelo.exe
 explorer "%CD%\dist"
 pause
 exit /b 0

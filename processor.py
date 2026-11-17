@@ -14,6 +14,13 @@ import re
 
 from PIL import Image, ImageOps, ImageFilter, ImageStat, ImageDraw, UnidentifiedImageError
 
+# Compatibilidad con las fotografías HEIC/HEIF originales del iPhone.
+try:
+    from pillow_heif import register_heif_opener
+    register_heif_opener()
+except ImportError:
+    pass  # La distribución Windows incluye la dependencia; tests sin HEIC siguen funcionando.
+
 
 # Anchura x altura en milímetros (orientación vertical).
 PAPER_SIZES: dict[str, tuple[float, float]] = {
@@ -33,7 +40,7 @@ PAPER_SIZES: dict[str, tuple[float, float]] = {
     "30 × 45 cm": (300, 450),
 }
 
-SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
+SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff", ".heic", ".heif"}
 Progress = Callable[[int, int, str], None]
 FIT_MODES = (
     "Ajustar (sin recortar)",
@@ -411,6 +418,8 @@ def _save_original_format(im: Image.Image, path: Path, source_path: Path, dpi: i
         options.update(format="WEBP", quality=95, method=5, dpi=(dpi, dpi))
     elif ext in (".tif", ".tiff"):
         options.update(format="TIFF", compression="tiff_lzw", dpi=(dpi, dpi))
+    elif ext in (".heic", ".heif"):
+        options.update(format="HEIF", quality=95)  # requiere pillow-heif (incluido)
     elif ext == ".bmp":
         options.update(format="BMP")  # BMP no conserva DPI de forma uniforme.
     im.save(target, **options)

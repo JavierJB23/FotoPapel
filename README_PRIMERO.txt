@@ -1,113 +1,90 @@
-REVELO v1.2.4 — FOTOS, PDF Y DOCUMENTOS LISTOS PARA IMPRIMIR
-==========================================================
+REVELO v1.3 — IMPORTAR FOTOS DEL MÓVIL POR QR
+============================================
 
-ACTUALIZACIÓN v1.2.4 — QUITAR BANDAS BLANCAS DE PDF ANTIGUOS
-------------------------------------------------------------
-- Corregido el fallo de v1.2.3: el detector anterior requería bandas blancas
-  en los cuatro lados, aunque una foto ajustada suele tenerlas solo ARRIBA y
-  ABAJO o solo a IZQUIERDA y DERECHA.
-- Ahora detecta parejas opuestas de franjas blancas grandes. Si parecen
-  procedentes de la maquetación anterior, recorta solo esos márgenes para
-  volver a aplicar el encaje elegido al importar un PDF de Revelo.
-- Con «Ampliar fondo (sin recortar)», las imágenes recuperadas de PDF antiguos
-  reciben un fondo difuminado igual que las fotografías nuevas.
-- Si no identifica franjas claras, la página PDF se conserva completa para
-  evitar recortes en documentos de texto o maquetaciones poco habituales.
-- La importación y el procesamiento son locales y nunca modifican originales.
+Versión de uso personal, gratuita, local y sin servicios en la nube.
+Partimos de Revelo v1.2.4 (versión estable). Se conservan todos sus formatos
+A4/A5/10x15, los cuatro modos de encaje, encuadernación, PDF/Word,
+previsualización y ordenación de páginas.
 
-CÓMO ACTUALIZAR DESDE v1.2.3
----------------------------
- 1. Descomprime Revelo_v1_2_4_correccion_bandas_PDF.zip.
- 2. En https://github.com/JavierJB23/FotoPapel/upload/main sube los archivos
-    main.py, processor.py y README_PRIMERO.txt, así como tests/test_processor.py.
- 3. Confirma la sustitución con «Commit changes».
- 4. En GitHub Actions, descarga el nuevo artefacto Revelo-Windows-EXE.
- No necesitas tocar .github/workflows ni el icono. Tampoco instalar Python.
+NOVEDADES v1.3
+--------------
+* Cabecera limpia: sin número de versión ni rótulo lateral.
+* R del logotipo con los colores invertidos dentro de la aplicación.
+* Botón «Importar desde móvil · QR» en el panel «Fotos y PDF cargados».
+* QR temporal que abre una página local en el navegador del móvil (sin app).
+* Transferencia de muchas fotos, una detrás de otra, con barra de progreso.
+* Recepción automática en Revelo, en orden, junto a las fotos y PDF del PC.
+* Lectura de formatos habituales del iPhone, incluidos HEIC y HEIF.
+* El fichero recibido se guarda íntegro, sin conversión ni recompresión
+  DURANTE LA TRANSFERENCIA. La maquetación/exportación sí cambia tamaño
+  o formato según lo seleccionado, como ya ocurría en Revelo.
 
-Aplicación gratuita para Windows, totalmente local: tus fotografías y PDF
-no se suben a Internet. No necesita registro ni suscripción.
+CÓMO IMPORTAR FOTOS DEL IPHONE
+-----------------------------
+1. Abre Revelo.exe en tu ordenador Windows.
+2. Comprueba que PC y iPhone estén en el mismo router/red doméstica.
+   Puede ser el PC por cable Ethernet y el iPhone por Wi-Fi.
+3. Pulsa «Importar desde móvil · QR».
+4. Si Windows Defender pregunta por firewall, permite acceso a REDES PRIVADAS.
+   No es necesario permitir acceso a redes públicas.
+5. Escanea el QR con la cámara del iPhone y abre el enlace en Safari.
+6. Pulsa Seleccionar archivos/fotos, elige varias de la galería.
+7. Pulsa «Enviar fotos». Verás el progreso del lote.
+8. Las fotos llegarán automáticamente a «Fotos y PDF cargados» y podrás
+   reordenarlas, previsualizarlas y exportarlas a PDF, Word o imágenes.
+9. Cierra la ventana del QR cuando termines; así se apaga el servidor local.
 
-QUÉ HA CAMBIADO DESDE FOTOPAPEL v1.1
------------------------------------
-- El programa se llama Revelo. El ejecutable será Revelo.exe y lleva el nuevo icono R.
-- Nuevo desplegable "MÁRGENES DE ENCUADERNACIÓN" con Sí y No.
-  Al elegir Sí, reserva 12 mm en el lado de la encuadernación y 3 mm en el
-  resto. En páginas impares va a la izquierda y en páginas pares a la
-  derecha, pensado para impresión a doble cara y espiral a la izquierda.
-  Se aplica también en Rellenar (recortar), PDF, Word, JPG/PNG y vista previa.
-- Nuevo botón "+ Añadir fotos / PDF". Elige fotos, uno o varios PDF o ambos.
-  Cada página PDF aparece individualmente con miniatura, manteniendo su orden.
-  Después puedes añadir fotos, moverlas a cualquier posición y exportar otro PDF.
-- Si empiezas importando un PDF con tamaño comercial reconocible (A4, A5,
-  etc.), Revelo ajusta automáticamente el desplegable de tamaño. Si el PDF
-  trae páginas con tamaños diferentes, muestra un aviso.
-- Quitados los prefijos 01 y 02 de los títulos de los dos paneles.
-- Continúan los 4 encajes de v1.1, la previsualización y el progreso aguamarina.
+IMPORTANTE: la primera ejecución puede activar una pregunta del firewall.
+Si el iPhone no abre el enlace, revisa que ambos aparatos estén en la misma
+red, que no sea una Wi-Fi de invitados aislada y que Windows permita Revelo
+en redes privadas. En algunos routers hay 'aislamiento de clientes'.
+No requiere cuenta, nube ni Internet, pero sí conectividad de red local.
 
-IMPORTANTE SOBRE LOS PDF
------------------------
-Cada página se carga como PNG temporal renderizado a 300 PPP. Si detectamos
-bandas blancas de relleno grandes, podemos separarlas y remaquetar la imagen;
-en caso contrario, preservamos la composición de la página. No recupera las fotografías
-originales por separado ni los textos como elementos editables. Al exportar,
-las páginas se vuelven a generar: si son documentos de texto muy pequeño,
-revisa el resultado en la previsualización y exporta a 300 PPP o más.
+SEGURIDAD Y PRIVACIDAD
+---------------------
+* El servidor local solo permanece activo mientras está abierta la ventana QR.
+* El QR incluye un token aleatorio diferente en cada sesión. Sin él, no se
+  pueden cargar fotos. No compartas el QR fuera de la red doméstica.
+* Se comprueba que los archivos recibidos sean imágenes válidas y se pone
+  un límite de 120 MB por foto, 500 fotos y 3 GB por sesión.
+* No se utiliza ni se consulta ninguna API externa.
+* Los archivos temporales recibidos del móvil se eliminan al cerrar Revelo.
+  No es un sistema de copia de seguridad: conserva tus fotos en el iPhone y
+  guarda siempre el PDF/Word/imágenes exportados antes de cerrar la app.
 
-Los originales NO se modifican. Revelo impide expresamente que se sobrescriba
-el PDF que has importado: tendrás que guardar una copia con otro nombre.
-Las páginas PNG temporales se borran al cerrar el programa.
-Los PDF protegidos con contraseña no se importan en esta versión.
+ACTUALIZAR TU REPOSITORIO DESDE v1.2.4
+--------------------------------------
+1. Descarga y descomprime el ZIP de Revelo v1.3.
+2. En https://github.com/JavierJB23/FotoPapel/upload/main sube estos archivos
+   y sustituye los que ya existen:
+      main.py
+      processor.py
+      pdf_import.py
+      mobile_import.py     <- archivo NUEVO
+      requirements.txt
+      README_PRIMERO.txt
+      compilar_en_windows.bat
+      logo_cabecera.png   <- archivo NUEVO
+      tests/test_processor.py
+      tests/test_mobile_import.py <- archivo NUEVO
+3. Pulsa «Commit changes».
+4. ACTUALIZA EL WORKFLOW (es necesario para empaquetar el icono y HEIC):
+   abre https://github.com/JavierJB23/FotoPapel/edit/main/.github/workflows/windows-exe.yml
+   y pega el contenido de «WORKFLOW_REVELO_v1_3_PARA_GITHUB.txt» que viene
+   junto al ZIP. Confirma con «Commit changes».
+5. En GitHub > Actions > «Crear EXE de Revelo» espera el icono verde.
+6. En «Artifacts», descarga «Revelo-Windows-EXE», descomprime el archivo y
+   ejecuta «Revelo.exe» con doble clic. No necesitas Python ni programar.
 
-Si importas un PDF con márgenes diseñados deliberadamente, comprueba la
-previsualización: la detección automática de bandas nunca es infalible.
-En documentos con texto o diagramas, conviene comprobar que no falte nada.
+Si la compilación falla en Actions, comparte una captura de la pestaña
+«Compilar Revelo.exe» y lo corregimos.
 
-CÓMO USARLO PARA TU RECETARIO
-----------------------------
-1. Abre Revelo.exe.
-2. Pulsa "+ Añadir fotos / PDF" y elige el PDF antiguo.
-3. Verás una miniatura por página, con el mismo orden del PDF original.
-4. Pulsa de nuevo "+ Añadir fotos / PDF" y elige las recetas nuevas.
-5. Arrastra las fotos a las posiciones deseadas o usa las flechas.
-6. Elige A5, calidad 300 PPP y encaje que prefieras.
-7. Márgenes de encuadernación = Sí si quieres reservar el canal interior.
-8. Pulsa "Previsualización" para revisar cada página.
-9. Exporta como PDF (o Word). Pon un nombre NUEVO y guárdalo.
-
-PARA ACTUALIZAR TU REPOSITORIO DE GITHUB (DESDE v1.1)
----------------------------------------------------
-Necesitas actualizar 6 archivos de la carpeta principal del repositorio:
-  main.py
-  processor.py
-  pdf_import.py                 (nuevo)
-  requirements.txt
-  icono.ico                    (la imagen del icono es nueva)
-  README_PRIMERO.txt
-
-Pasos:
- A. Abre tu repositorio: https://github.com/JavierJB23/FotoPapel
- B. Add file > Upload files. Sube esos 6 archivos DESCOMPRIMIDOS.
- C. Pulsa Commit changes. Ignora la compilación intermedia si se inicia.
- D. Edita también el archivo oculto que ya existe en GitHub:
-    .github/workflows/windows-exe.yml
-    - Entra en el archivo, pulsa el lápiz (Edit this file).
-    - Sustituye su contenido por el archivo Windows_Workflow_Revelo.txt
-      incluido en la entrega de Revelo v1.2.
-    - Pulsa Commit changes.
- E. Entra en la pestaña Actions. Selecciona la ejecución más reciente
-    llamada "Crear EXE de Revelo" y comprueba que tiene marca verde.
- F. En Artifacts descarga "Revelo-Windows-EXE".
-    Descomprime el ZIP y abre Revelo.exe con doble clic.
-
-No necesitas Python ni instalar programas de desarrollo en tu PC.
-La compilación automática se ejecuta en Windows dentro de GitHub Actions.
-
-ALTERNATIVA TÉCNICA (NO NECESARIA)
----------------------------------
-Si ya tienes Python en Windows, ejecuta compilar_en_windows.bat para crear
-Revelo.exe en la carpeta dist, después de instalar las dependencias gratuitas.
-
-COMPONENTES LIBRES Y GRATUITOS
-----------------------------
-Python, tkinter, Pillow, ReportLab, python-docx, pypdfium2 y PyInstaller.
-Solo uso personal. No se envían imágenes a ningún servicio remoto.
+NOTAS
+-----
+* El título de la ventana no muestra la versión, pero esta distribución es v1.3.
+* No he podido ejecutar aquí un .exe de Windows: la compilación real se hace
+  en GitHub Actions, sobre Windows. He probado Python y la interfaz sobre
+  Linux, con transferencias HTTP locales y exportación posterior a PDF.
+* Los archivos originales existentes en tu PC no se modifican.
+* El uso de pillow-heif para HEIC/HEIF se verifica al compilar en Windows,
+  ya que no estaba instalado en este entorno de pruebas.
