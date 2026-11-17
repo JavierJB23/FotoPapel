@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import queue
+import math
 import subprocess
 import sys
 import threading
@@ -16,10 +17,11 @@ from PIL import Image, ImageTk, ImageOps, ImageDraw
 
 from processor import (
     ExportOptions, PAPER_SIZES, SUPPORTED_EXTENSIONS, FIT_MODES, export, render_print_image,
-    pixel_size, source_dimensions,
+    pixel_size, source_dimensions, page_groups, render_layout_page,
 )
 from pdf_import import import_pdf_pages, matched_paper
 from mobile_import import PhoneTransferServer
+from project_io import save_project, load_project, ProjectError
 import qrcode
 
 APP_NAME = "Revelo"
@@ -83,6 +85,8 @@ class ReveloApp:
         self.pdf_origins: dict[Path, Path] = {}
         self.pdf_temp = tempfile.TemporaryDirectory(prefix="Revelo_PDF_")
         self.mobile_temp = tempfile.TemporaryDirectory(prefix="Revelo_Movil_")
+        self.project_temp = tempfile.TemporaryDirectory(prefix="Revelo_Proyecto_")
+        self.project_path: Path | None = None
         self.mobile_server: PhoneTransferServer | None = None
         self.mobile_window: tk.Toplevel | None = None
         self.mobile_qr: ImageTk.PhotoImage | None = None
@@ -115,8 +119,10 @@ class ReveloApp:
         self.dpi = tk.StringVar(value="300")
         self.output_format = tk.StringVar(value="PDF")
         self.binding = tk.StringVar(value="No")
+        self.per_sheet = tk.StringVar(value="1")
+        self.layout_info = tk.StringVar(value="Una fotografía por hoja en Word y PDF")
         self.overview = tk.StringVar(value="A4 · 210 × 297 mm · 2480 × 3508 px a 300 PPP")
-        self.feedback = tk.StringVar(value="Carga fotos o PDF para empezar. Los archivos originales no se modifican.")
+        self.feedback = tk.StringVar(value="Listo para cargar fotos y PDF.")
         self.count_var = tk.StringVar(value="0 elementos")
         self.page_count_var = tk.StringVar(value="0 páginas")
         self.percent_text = tk.StringVar(value="(0 %)")
@@ -126,6 +132,7 @@ class ReveloApp:
         self._style()
         self._layout()
         self._update_overview()
+        self.per_sheet.trace_add("write", self._on_per_sheet_changed)
         self.root.after(120, self._poll)
 
     def _style(self):
@@ -179,6 +186,12 @@ class ReveloApp:
         htext.pack(side="left")
         self._label(htext, "Revelo", size=23, weight="bold").pack(anchor="w")
         self._label(htext, "Tus fotos y documentos, listos para imprimir", color=MUTED, size=10).pack(anchor="w")
+        project_buttons = tk.Frame(header, bg=BG)
+        project_buttons.pack(side="right", padx=(10, 0))
+        self.save_project_btn = self._button(project_buttons, "Guardar proyecto", self.save_project_dialog, small=True)
+        self.save_project_btn.pack(side="right")
+        self.open_project_btn = self._button(project_buttons, "Abrir proyecto", self.open_project_dialog, small=True)
+        self.open_project_btn.pack(side="right", padx=(0, 8))
 
         setting_outer = tk.Frame(self.root, bg=BG, padx=24)
         setting_outer.pack(fill="x")
@@ -207,8 +220,9 @@ class ReveloApp:
         self._label(info, "●", color=ACCENT, size=10).pack(side="left")
         self._label(info, "  ", color=MUTED).pack(side="left")
         self._label(info, "", size=10, color=MUTED, textvariable=self.overview).pack(side="left")
-        self._label(info, "  ·  Una página por hoja en Word y PDF", color=MUTED).pack(side="left")
-        for var in (self.paper, self.orientation, self.dpi, self.fit, self.output_format, self.binding):
+        self._label(info, "  ·  ", color=MUTED).pack(side="left")
+        self._label(info, "", textvariable=self.layout_info, color=MUTED).pack(side="left")
+        for var in (self.paper, self.orientation, self.dpi, self.fit, self.output_format, self.binding, self.per_sheet):
             var.trace_add("write", self._update_overview)
 
         # Reservar el pie ANTES de distribuir el espacio restante a los paneles;
@@ -276,16 +290,22 @@ class ReveloApp:
         ordering_top.pack(fill="x")
         rt = tk.Frame(ordering_top, bg=SURFACE)
         rt.pack(side="left")
-        self._label(rt, "ORDEN DE LAS PÁGINAS", size=12, weight="bold").pack(anchor="w")
-        self._label(rt, "0 páginas", textvariable=self.page_count_var,
+        self._label(rt, "ORDEN DEL CONTENIDO", size=12, weight="bold").pack(anchor="w")
+        self._label(rt, "0 hojas", textvariable=self.page_count_var,
                     size=10, color=MUTED).pack(anchor="w", pady=(3, 0))
         self.reset_btn = self._button(ordering_top, "Orden inicial", self.reset_order, small=True)
         self.reset_btn.pack(side="right")
         tk.Frame(right_panel, height=1, bg=BORDER).pack(fill="x")
-        hint = tk.Frame(right_panel, bg=ACCENT_DARK, padx=12, pady=9)
-        hint.pack(fill="x", padx=12, pady=(12, 2))
-        self._label(hint, "Arrastra a un número, usa las flechas o selecciona un elemento y su posición.",
-                    size=10, color="#C1F3E5").pack(anchor="w")
+        hint = tk.Frame(right_panel, bg=ACCENT_DARK, padx=12, pady=8)
+        hint.pack(fill="x", padx=12, pady=(10, 2))
+        self._label(hint, "FOTOS POR HOJA", size=9, weight="bold",
+                    color="#C1F3E5").pack(side="left", padx=(0, 8))
+        self.per_sheet_combo = ttk.Combobox(hint, values=["1", "2", "4", "6", "9"],
+                                           textvariable=self.per_sheet, width=3,
+                                           state="readonly", style="Custom.TCombobox")
+        self.per_sheet_combo.pack(side="left")
+        self._label(hint, "Agrupación consecutiva",
+                    size=9, color="#C1F3E5").pack(side="left", padx=(12, 0))
         self.order_area = ScrollingArea(right_panel)
         self.order_area.pack(fill="both", expand=True, padx=9, pady=9)
         self._show_empty_order()
@@ -316,8 +336,19 @@ class ReveloApp:
             self.overview.set(f"{self.paper.get()} · {w:g} × {h:g} mm · {dw} × {dh} píxeles · {self.dpi.get()} PPP{suffix}")
         except Exception:
             pass
+        try:
+            per_sheet = int(self.per_sheet.get())
+            self.layout_info.set("Una fotografía por hoja" if per_sheet == 1
+                                 else f"{per_sheet} fotos por hoja · PDF/Word/PNG")
+            self.page_count_var.set(f"{len(self.pages)} elementos · {math.ceil(len(self.pages) / per_sheet)} hojas")
+        except (ValueError, ZeroDivisionError):
+            pass
         if self.preview_window is not None and self.preview_window.winfo_exists():
+            self.preview_index = min(self.preview_index, max(0, math.ceil(len(self.pages) / int(self.per_sheet.get())) - 1))
             self._show_preview_page()
+
+    def _on_per_sheet_changed(self, *_):
+        self.render_order()
 
     def _thumbnail(self, path: Path) -> ImageTk.PhotoImage:
         if path not in self.thumbnails:
@@ -428,8 +459,10 @@ class ReveloApp:
         self.is_busy = active
         state = "disabled" if active else "normal"
         for button in (self.add_btn, self.clear_btn, self.reset_btn,
-                       self.preview_btn, self.export_btn):
+                       self.preview_btn, self.export_btn, self.open_project_btn,
+                       self.save_project_btn):
             button.configure(state=state)
+        self.per_sheet_combo.configure(state="disabled" if active else "readonly")
 
     def import_paths(self, incoming):
         """Carga fotos y convierte páginas PDF en segundo plano para no bloquear la ventana."""
@@ -614,11 +647,12 @@ class ReveloApp:
     def _show_empty_order(self):
         self._clear_children(self.order_area.inner)
         self._label(self.order_area.inner,
-                    "Aquí aparecerán las posiciones 1, 2, 3…\n\nCada posición será una página del documento exportado.",
+                    "Aquí aparecerá el orden de tus imágenes.\n\nRevelo las agrupará según las fotos por hoja elegidas.",
                     color=MUTED, size=11, justify="center").pack(pady=100)
 
     def render_order(self):
-        self.page_count_var.set(f"{len(self.pages)} página{'s' if len(self.pages) != 1 else ''}")
+        per_sheet = int(self.per_sheet.get())
+        self.page_count_var.set(f"{len(self.pages)} elementos · {math.ceil(len(self.pages) / per_sheet)} hojas")
         if not self.pages:
             self._show_empty_order()
             return
@@ -643,7 +677,7 @@ class ReveloApp:
             name = self._label(text_box, short, weight="bold", size=10, bg=SURFACE_2, anchor="w")
             name.pack(fill="x")
             dim = self.details.get(path, (0, 0))
-            sub = self._label(text_box, f"Página {idx + 1}  ·  {dim[0]} × {dim[1]} px",
+            sub = self._label(text_box, f"Hoja {idx // per_sheet + 1}  ·  {dim[0]} × {dim[1]} px",
                               color=MUTED, size=9, bg=SURFACE_2, anchor="w")
             sub.pack(fill="x", pady=(3, 0))
             arrows = tk.Frame(slot, bg=SURFACE_2)
@@ -758,6 +792,7 @@ class ReveloApp:
             fit=self.fit.get(), dpi=int(self.dpi.get()), fmt=fmt,
             binding=self.binding.get() == "Sí",
             pdf_page_paths=frozenset(self.pdf_origins),
+            photos_per_page=int(self.per_sheet.get()),
         )
 
     def open_preview(self):
@@ -782,7 +817,7 @@ class ReveloApp:
         except tk.TclError:
             pass
         self.preview_window = window
-        self.preview_index = self.pages.index(self.selected) if self.selected in self.pages else 0
+        self.preview_index = self.pages.index(self.selected) // int(self.per_sheet.get()) if self.selected in self.pages else 0
         top = tk.Frame(window, bg=BG, padx=22, pady=15)
         top.pack(fill="x")
         self._label(top, "VISTA PREVIA DE IMPRESIÓN", size=15,
@@ -830,7 +865,8 @@ class ReveloApp:
         if not self.pages:
             self._close_preview()
             return
-        new_index = max(0, min(len(self.pages) - 1, self.preview_index + step))
+        total = len(page_groups(self.pages, int(self.per_sheet.get())))
+        new_index = max(0, min(total - 1, self.preview_index + step))
         if new_index != self.preview_index:
             self.preview_index = new_index
             self._show_preview_page()
@@ -841,15 +877,20 @@ class ReveloApp:
         if not self.pages:
             self._close_preview()
             return
-        self.preview_index = min(self.preview_index, len(self.pages) - 1)
-        path = self.pages[self.preview_index]
+        groups = page_groups(self.pages, int(self.per_sheet.get()))
+        self.preview_index = min(self.preview_index, len(groups) - 1)
+        group = groups[self.preview_index]
+        path = group[0]
+        short_label = self.path_labels.get(path, path.name)
+        if len(group) > 1:
+            short_label = f"{len(group)} imágenes · {short_label}…"
         self.preview_page_text.set(
-            f"Página {self.preview_index + 1} de {len(self.pages)}  ·  {self.path_labels.get(path, path.name)}")
+            f"Hoja {self.preview_index + 1} de {len(groups)}  ·  {short_label}")
         self.preview_prev_btn.configure(state="normal" if self.preview_index > 0 else "disabled")
-        self.preview_next_btn.configure(state="normal" if self.preview_index < len(self.pages) - 1 else "disabled")
+        self.preview_next_btn.configure(state="normal" if self.preview_index < len(groups) - 1 else "disabled")
         try:
-            rendered, (w_mm, h_mm), lowres = render_print_image(
-                path, self._options(), preview_max_size=(1100, 850),
+            rendered, (w_mm, h_mm), lowres = render_layout_page(
+                group, self._options(), preview_max_size=(1100, 850),
                 page_index=self.preview_index,
             )
             old = self.preview_image
@@ -857,8 +898,9 @@ class ReveloApp:
             if old is not None:
                 old.close()
             notice = " · Atención: elemento de poca resolución" if lowres else ""
-            imported_pdf = path in self.pdf_origins
-            bind_note = ((" · Página PDF importada" if imported_pdf else "") +
+            imported_pdf = any(item in self.pdf_origins for item in group)
+            bind_note = ((" · Contiene páginas PDF" if imported_pdf and len(group) > 1 else
+                          " · Página PDF importada" if imported_pdf else "") +
                          ((" · Encuadernación: " + ("izquierda" if self.preview_index % 2 == 0 else "derecha")) if self.binding.get() == "Sí" else ""))
             self.preview_detail_text.set(
                 f"{self.paper.get()}  ·  {w_mm:g} × {h_mm:g} mm  ·  {self.fit.get()}"
@@ -948,6 +990,110 @@ class ReveloApp:
 
         threading.Thread(target=do_work, daemon=True).start()
 
+    def _project_settings(self) -> dict:
+        return {
+            "paper": self.paper.get(), "orientation": self.orientation.get(),
+            "fit": self.fit.get(), "dpi": int(self.dpi.get()),
+            "fmt": self._options().fmt, "binding": self.binding.get() == "Sí",
+            "photos_per_page": int(self.per_sheet.get()),
+        }
+
+    def save_project_dialog(self):
+        if self.is_busy:
+            return
+        if not self.paths:
+            messagebox.showinfo("Guardar proyecto", "Añade al menos una foto o PDF para guardar.")
+            return
+        proposed = self.project_path.stem if self.project_path else "Mi proyecto Revelo"
+        chosen = filedialog.asksaveasfilename(
+            title="Guardar proyecto portable de Revelo",
+            defaultextension=".revelo", initialfile=proposed + ".revelo",
+            filetypes=[("Proyecto de Revelo", "*.revelo")],
+        )
+        if not chosen:
+            return
+        target = Path(chosen)
+        if target.exists() and not messagebox.askyesno(
+            "Sustituir proyecto", f"¿Quieres reemplazar {target.name}?"):
+            return
+        self._set_busy(True)
+        self.feedback.set("Guardando imágenes y orden dentro del proyecto…")
+        self.progress["value"] = 0
+        self.percent_text.set("(0 %)")
+        paths, pages = self.paths.copy(), self.pages.copy()
+        labels, origins, settings = dict(self.path_labels), dict(self.pdf_origins), self._project_settings()
+
+        def worker():
+            try:
+                save_project(target, paths, pages, labels, origins, settings,
+                             progress=lambda n, total: self.updates.put(("project_progress", n, total, "Guardando")))
+                self.updates.put(("project_saved", target))
+            except Exception as exc:
+                self.updates.put(("project_error", str(exc)))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def open_project_dialog(self):
+        if self.is_busy:
+            return
+        chosen = filedialog.askopenfilename(
+            title="Abrir proyecto de Revelo", filetypes=[("Proyecto de Revelo", "*.revelo")],
+        )
+        if not chosen:
+            return
+        if self.paths and not messagebox.askyesno(
+            "Abrir proyecto", "Se reemplazará la composición actual. ¿Has guardado los cambios que quieras conservar?"):
+            return
+        self._set_busy(True)
+        self._close_preview()
+        self.progress["value"] = 0
+        self.percent_text.set("(0 %)")
+        self.feedback.set("Abriendo proyecto y recuperando sus imágenes…")
+        source = Path(chosen)
+
+        def worker():
+            temporary = tempfile.TemporaryDirectory(prefix="Revelo_Proyecto_")
+            try:
+                loaded = load_project(source, Path(temporary.name),
+                                      progress=lambda n, total: self.updates.put(("project_progress", n, total, "Abriendo")))
+                self.updates.put(("project_loaded", source, temporary, loaded))
+            except Exception as exc:
+                temporary.cleanup()
+                self.updates.put(("project_error", str(exc)))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_project_open(self, source, temporary, loaded):
+        old = self.project_temp
+        self.project_temp = temporary
+        self.paths = loaded["paths"]
+        self.pages = loaded["pages"]
+        self.path_labels = loaded["labels"]
+        self.pdf_origins = loaded["pdf_origins"]
+        self.thumbnails.clear()
+        self.thumbnails_small.clear()
+        self.details.clear()
+        self.selected = None
+        self.output_path = None
+        self.open_btn.configure(state="disabled")
+        for path in self.paths:
+            self.details[path] = source_dimensions(path)
+            self._thumbnail(path)
+        settings = loaded["settings"]
+        self.paper.set(settings["paper"])
+        self.orientation.set(settings["orientation"])
+        self.fit.set(settings["fit"])
+        self.dpi.set(str(settings["dpi"]))
+        self.output_format.set("Imágenes (mismo formato)" if settings["fmt"] == "Imagenes" else settings["fmt"])
+        self.binding.set("Sí" if settings["binding"] else "No")
+        self.per_sheet.set(str(settings["photos_per_page"]))
+        self.project_path = source
+        self.render_library()
+        self.render_order()
+        self._set_busy(False)
+        self.progress["value"] = 100
+        self.percent_text.set("(100 %)")
+        self.feedback.set(f"✓ Proyecto abierto: {source.name} · {len(self.paths)} elementos · orden recuperado")
+        old.cleanup()
+
     def _poll(self):
         try:
             while True:
@@ -968,6 +1114,33 @@ class ReveloApp:
                     self._finish_import(items, detected_paper, mixed_pdf, errors)
                     self.progress["value"] = 0
                     self.percent_text.set("(0 %)")
+                elif event[0] == "project_progress":
+                    _, current, total, operation = event
+                    percent = round(100 * current / total)
+                    self.progress["value"] = percent
+                    self.percent_text.set(f"({percent} %)")
+                    self.feedback.set(f"{operation} proyecto: {current}/{total} archivos")
+                elif event[0] == "project_saved":
+                    _, target = event
+                    self.project_path = target
+                    self._set_busy(False)
+                    self.progress["value"] = 100
+                    self.percent_text.set("(100 %)")
+                    self.feedback.set(f"✓ Proyecto guardado: {target.name} · portable con fotos incluidas")
+                    messagebox.showinfo("Proyecto guardado", f"El proyecto está listo en:\n{target}")
+                elif event[0] == "project_loaded":
+                    _, source, temporary, loaded = event
+                    try:
+                        self._finish_project_open(source, temporary, loaded)
+                    except Exception as exc:
+                        self._set_busy(False)
+                        messagebox.showerror("Abrir proyecto", str(exc))
+                elif event[0] == "project_error":
+                    self._set_busy(False)
+                    self.progress["value"] = 0
+                    self.percent_text.set("(0 %)")
+                    self.feedback.set("No se ha podido abrir o guardar el proyecto.")
+                    messagebox.showerror("Proyecto de Revelo", event[1])
                 elif event[0] == "progress":
                     _, current, total, name = event
                     percent = round(100 * current / total)
@@ -982,11 +1155,12 @@ class ReveloApp:
                     self.percent_text.set("(100 %)")
                     self.output_path = Path(result)
                     self.open_btn.configure(state="normal")
-                    self.feedback.set(f"✓ {count} página(s) exportadas. Resultado: {self.output_path.name}")
+                    sheet_count = math.ceil(count / int(self.per_sheet.get()))
+                    self.feedback.set(f"✓ {sheet_count} hoja(s) exportadas. Resultado: {self.output_path.name}")
                     note = (f"\n\nAtención: {warning_count} foto(s) se han ampliado bastante. "
                             "Puede que se vean borrosas al imprimir." if warning_count else "")
                     messagebox.showinfo("Exportación completada",
-                                        f"Se han preparado {count} página(s).\n\nGuardado en:\n{result}{note}")
+                                        f"Se han preparado {sheet_count} hoja(s) con {count} elementos.\n\nGuardado en:\n{result}{note}")
                 elif event[0] == "error":
                     self._set_busy(False)
                     self.export_btn.configure(text="Exportar fotos   →")
@@ -1010,6 +1184,7 @@ class ReveloApp:
         self._close_mobile_import()
         self.mobile_temp.cleanup()
         self.pdf_temp.cleanup()
+        self.project_temp.cleanup()
         self.root.destroy()
 
     def open_result(self):

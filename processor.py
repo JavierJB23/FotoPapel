@@ -61,6 +61,7 @@ class ExportOptions:
     binding: bool = False  # Reserva canal interior para encuadernación
     # Una página de PDF importada ya está maquetada. No añadirle un segundo encaje.
     pdf_page_paths: frozenset[Path] = frozenset()
+    photos_per_page: int = 1  # 1, 2, 4, 6 o 9; 1 conserva el funcionamiento de v1.3
 
     def validate(self) -> None:
         if self.paper not in PAPER_SIZES:
@@ -73,6 +74,8 @@ class ExportOptions:
             raise ValueError("Los PPP deben estar entre 72 y 600")
         if not isinstance(self.binding, bool):
             raise ValueError("Márgenes de encuadernación no reconocidos")
+        if self.photos_per_page not in (1, 2, 4, 6, 9):
+            raise ValueError("Número de fotos por hoja no reconocido")
         if self.fmt not in ("Imagenes", "PDF", "Word"):
             raise ValueError("Formato de salida no reconocido")
 
@@ -391,6 +394,94 @@ def render_print_image(
         im.close()
 
 
+def page_groups(paths: Sequence[Path], per_page: int) -> list[tuple[Path, ...]]:
+    """Agrupa contenidos según el orden del usuario (no altera los originales)."""
+    if per_page not in (1, 2, 4, 6, 9):
+        raise ValueError("Número de fotos por hoja no reconocido")
+    return [tuple(paths[i:i + per_page]) for i in range(0, len(paths), per_page)]
+
+
+def _grid_shape(count: int, landscape: bool) -> tuple[int, int]:
+    if count == 2:
+        return (2, 1) if landscape else (1, 2)
+    if count == 6:
+        return (3, 2) if landscape else (2, 3)
+    side = {4: 2, 9: 3}.get(count, 1)
+    return side, side
+
+
+def render_layout_page(
+    paths: Sequence[Path], opts: ExportOptions, *,
+    preview_max_size: tuple[int, int] | None = None, page_index: int = 0,
+) -> tuple[Image.Image, tuple[float, float], bool]:
+    """Renderiza una hoja con todas las fotografías indicadas.
+
+    Una sola imagen en modo 1 mantiene el comportamiento de Revelo v1.3.
+    Las páginas con varias fotos dejan 3 mm entre celdas y respetan el canal
+    de encuadernación de la hoja completa.
+    """
+    opts.validate()
+    if not paths:
+        raise ValueError("La página no contiene fotografías")
+    if opts.photos_per_page == 1:
+        return render_print_image(paths[0], opts, preview_max_size=preview_max_size,
+                                  page_index=page_index)
+    if len(paths) > opts.photos_per_page:
+        raise ValueError("Demasiadas fotografías para la hoja seleccionada")
+    w_mm, h_mm = dimensions_mm(paths[0], opts)
+    out_w, out_h = pixel_size(w_mm, h_mm, opts.dpi)
+    if preview_max_size:
+        if min(preview_max_size) <= 0:
+            raise ValueError("Previsualización no válida")
+        scale = min(1.0, preview_max_size[0] / out_w, preview_max_size[1] / out_h)
+        out_w, out_h = max(1, round(out_w * scale)), max(1, round(out_h * scale))
+    if opts.binding:
+        x0, y0, x1, y1 = printable_box((out_w, out_h), (w_mm, h_mm),
+                                       binding=True, page_index=page_index)
+    else:
+        margin = max(1, round(out_w * 3 / w_mm))
+        margin_y = max(1, round(out_h * 3 / h_mm))
+        x0, y0, x1, y1 = margin, margin_y, out_w-margin, out_h-margin_y
+    cols, rows = _grid_shape(opts.photos_per_page, w_mm > h_mm)
+    gap_x = max(1, round(out_w * 3 / w_mm))
+    gap_y = max(1, round(out_h * 3 / h_mm))
+    usable_w = x1 - x0 - (cols - 1) * gap_x
+    usable_h = y1 - y0 - (rows - 1) * gap_y
+    if usable_w < cols or usable_h < rows:
+        raise ValueError("El papel es demasiado pequeño para esta distribución")
+    sheet = Image.new("RGB", (out_w, out_h), "white")
+    lowres_any = False
+    for idx, path in enumerate(paths):
+        col, row = idx % cols, idx // cols
+        cx0 = x0 + (col * usable_w // cols) + col * gap_x
+        cx1 = x0 + ((col + 1) * usable_w // cols) + col * gap_x
+        cy0 = y0 + (row * usable_h // rows) + row * gap_y
+        cy1 = y0 + ((row + 1) * usable_h // rows) + row * gap_y
+        cw, ch = cx1-cx0, cy1-cy0
+        with Image.open(path) as raw:
+            original = _flatten_rgb(ImageOps.exif_transpose(raw))
+        try:
+            content = original
+            if path in opts.pdf_page_paths:
+                content, _ = _trim_revelo_like_page_background(original)
+            try:
+                sw, sh = content.size
+                factor = (max(cw / sw, ch / sh) if opts.fit == "Rellenar (recortar)"
+                          else min(cw / sw, ch / sh))
+                lowres_any |= factor > 1.25
+                tile = _render_inside(content, (cw, ch), opts.fit)
+                try:
+                    sheet.paste(tile, (cx0, cy0))
+                finally:
+                    tile.close()
+            finally:
+                if content is not original:
+                    content.close()
+        finally:
+            original.close()
+    return sheet, (w_mm, h_mm), lowres_any
+
+
 def _safe_basename(text: str) -> str:
     return re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", text).strip(" .") or "foto"
 
@@ -443,14 +534,21 @@ def export_images(paths: Sequence[Path], opts: ExportOptions, dest: Path, progre
     folder = _distinct_file(dest, f"Revelo_{label}_{datetime.now():%Y%m%d_%H%M%S}", "")
     folder.mkdir()
     lowres_count = 0
-    for i, path in enumerate(paths, 1):
-        rendered, _, lowres = render_print_image(path, opts, page_index=i - 1)
+    groups = page_groups(paths, opts.photos_per_page)
+    for i, group in enumerate(groups, 1):
+        rendered, _, lowres = render_layout_page(group, opts, page_index=i - 1)
         lowres_count += int(lowres)
-        out_base = _safe_basename(f"{i:02d}_{path.stem}_{label}")
-        _save_original_format(rendered, folder / out_base, path, opts.dpi)
+        if opts.photos_per_page == 1:
+            out_base = _safe_basename(f"{i:02d}_{group[0].stem}_{label}")
+            _save_original_format(rendered, folder / out_base, group[0], opts.dpi)
+        else:
+            # Varias fotografías pueden tener formatos distintos: la hoja
+            # completa se guarda en PNG sin pérdida, no como un falso JPG/HEIC.
+            target = folder / f"{i:02d}_pagina_{label}.png"
+            rendered.save(target, format="PNG", dpi=(opts.dpi, opts.dpi), optimize=True)
         rendered.close()
         if progress:
-            progress(i, len(paths), path.name)
+            progress(i, len(groups), f"Hoja {i}")
     return folder, lowres_count
 
 
@@ -464,8 +562,9 @@ def export_pdf(paths: Sequence[Path], opts: ExportOptions, target: Path, progres
     document.setTitle(f"Revelo · {opts.paper}")
     lowres_count = 0
     try:
-        for i, path in enumerate(paths, 1):
-            rendered, (w_mm, h_mm), lowres = render_print_image(path, opts, page_index=i - 1)
+        groups = page_groups(paths, opts.photos_per_page)
+        for i, group in enumerate(groups, 1):
+            rendered, (w_mm, h_mm), lowres = render_layout_page(group, opts, page_index=i - 1)
             lowres_count += int(lowres)
             w_pt, h_pt = w_mm * 72 / 25.4, h_mm * 72 / 25.4
             document.setPageSize((w_pt, h_pt))
@@ -475,7 +574,7 @@ def export_pdf(paths: Sequence[Path], opts: ExportOptions, target: Path, progres
             rendered.close()
             stream.close()
             if progress:
-                progress(i, len(paths), path.name)
+                progress(i, len(groups), f"Hoja {i}")
         document.save()
     except Exception:
         try:
@@ -541,8 +640,9 @@ def export_word(paths: Sequence[Path], opts: ExportOptions, target: Path, progre
     style.paragraph_format.space_after = Pt(0)
     style.paragraph_format.line_spacing = Pt(1)
     lowres_count = 0
-    for i, path in enumerate(paths, 1):
-        rendered, (w_mm, h_mm), lowres = render_print_image(path, opts, page_index=i - 1)
+    groups = page_groups(paths, opts.photos_per_page)
+    for i, group in enumerate(groups, 1):
+        rendered, (w_mm, h_mm), lowres = render_layout_page(group, opts, page_index=i - 1)
         lowres_count += int(lowres)
         if i == 1:
             section = document.sections[0]
@@ -566,7 +666,7 @@ def export_word(paths: Sequence[Path], opts: ExportOptions, target: Path, progre
         stream.close()
         rendered.close()
         if progress:
-            progress(i, len(paths), path.name)
+            progress(i, len(groups), f"Hoja {i}")
     document.core_properties.title = f"Revelo · {opts.paper}"
     document.save(str(target))
     return target, lowres_count
