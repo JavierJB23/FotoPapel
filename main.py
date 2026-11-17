@@ -1,4 +1,4 @@
-"""FotoPapel: prepara y ordena fotografías para imprimir sin conocimientos técnicos."""
+"""Revelo: organiza fotografías y páginas PDF para imprimir sin complicaciones."""
 from __future__ import annotations
 
 import os
@@ -6,6 +6,8 @@ import queue
 import subprocess
 import sys
 import threading
+import tempfile
+import uuid
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from pathlib import Path
@@ -16,8 +18,9 @@ from processor import (
     ExportOptions, PAPER_SIZES, SUPPORTED_EXTENSIONS, FIT_MODES, export, render_print_image,
     pixel_size, source_dimensions,
 )
+from pdf_import import import_pdf_pages, matched_paper
 
-APP_NAME = "FotoPapel"
+APP_NAME = "Revelo"
 BG = "#0B1422"
 SURFACE = "#142236"
 SURFACE_2 = "#1B2D43"
@@ -66,14 +69,17 @@ class ScrollingArea(tk.Frame):
             self.bind_wheel_recursive(child)
 
 
-class FotoPapelApp:
+class ReveloApp:
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("FotoPapel v1.1 · Fotos listas para imprimir")
+        self.root.title("Revelo v1.2 · Fotos y PDF listos para imprimir")
         self.root.geometry("1270x845")
         self.root.minsize(940, 650)
         self.root.configure(bg=BG)
         self.paths: list[Path] = []
+        self.path_labels: dict[Path, str] = {}
+        self.pdf_origins: dict[Path, Path] = {}
+        self.pdf_temp = tempfile.TemporaryDirectory(prefix="Revelo_PDF_")
         self.pages: list[Path] = []
         self.thumbnails: dict[Path, ImageTk.PhotoImage] = {}
         self.thumbnails_small: dict[Path, ImageTk.PhotoImage] = {}
@@ -99,9 +105,10 @@ class FotoPapelApp:
         self.fit = tk.StringVar(value="Ajustar (sin recortar)")
         self.dpi = tk.StringVar(value="300")
         self.output_format = tk.StringVar(value="PDF")
+        self.binding = tk.StringVar(value="No")
         self.overview = tk.StringVar(value="A4 · 210 × 297 mm · 2480 × 3508 px a 300 PPP")
-        self.feedback = tk.StringVar(value="Carga tus fotos para empezar. Los archivos originales no se modifican.")
-        self.count_var = tk.StringVar(value="0 fotos")
+        self.feedback = tk.StringVar(value="Carga fotos o PDF para empezar. Los archivos originales no se modifican.")
+        self.count_var = tk.StringVar(value="0 elementos")
         self.page_count_var = tk.StringVar(value="0 páginas")
         self.percent_text = tk.StringVar(value="(0 %)")
         self.preview_page_text = tk.StringVar(value="")
@@ -130,7 +137,7 @@ class FotoPapelApp:
             troughcolor=SURFACE, bordercolor=SURFACE, arrowcolor=MUTED,
         )
         style.configure(
-            "FotoPapel.Horizontal.TProgressbar", troughcolor=SURFACE_2,
+            "Revelo.Horizontal.TProgressbar", troughcolor=SURFACE_2,
             background=ACCENT, darkcolor=ACCENT, lightcolor=ACCENT,
             bordercolor=BORDER, thickness=15, relief="flat",
         )
@@ -156,12 +163,12 @@ class FotoPapelApp:
         header.pack(fill="x")
         left = tk.Frame(header, bg=BG)
         left.pack(side="left", fill="x", expand=True)
-        tk.Label(left, text="F", font=("Segoe UI", 25, "bold"), fg=BG, bg=ACCENT,
+        tk.Label(left, text="R", font=("Segoe UI", 25, "bold"), fg=BG, bg=ACCENT,
                  width=2, height=1).pack(side="left", padx=(0, 14))
         htext = tk.Frame(left, bg=BG)
         htext.pack(side="left")
-        self._label(htext, "FotoPapel", size=23, weight="bold").pack(anchor="w")
-        self._label(htext, "Tus fotos, al tamaño exacto para imprimir  ·  v1.1", color=MUTED, size=10).pack(anchor="w")
+        self._label(htext, "Revelo", size=23, weight="bold").pack(anchor="w")
+        self._label(htext, "Tus fotos y documentos, listos para imprimir  ·  v1.2", color=MUTED, size=10).pack(anchor="w")
         self._label(header, "100 % LOCAL  ·  SIN SUBIR FOTOS A INTERNET", color=ACCENT, size=9,
                     weight="bold").pack(side="right")
 
@@ -180,13 +187,24 @@ class FotoPapelApp:
         self._field(row, "CALIDAD", self.dpi, ["150", "300", "600"], width=8, grow=1)
         self._field(row, "EXPORTAR COMO", self.output_format,
                     ["PDF", "Word", "Imágenes (mismo formato)"], width=25, grow=3)
+        margins_row = tk.Frame(settings, bg=SURFACE)
+        margins_row.pack(fill="x", pady=(12, 0))
+        margin_holder = tk.Frame(margins_row, bg=SURFACE)
+        margin_holder.pack(side="left")
+        self._label(margin_holder, "MÁRGENES DE ENCUADERNACIÓN", color=MUTED,
+                    size=8, weight="bold").pack(anchor="w", pady=(0, 5))
+        ttk.Combobox(margin_holder, values=["No", "Sí"], textvariable=self.binding,
+                     width=9, state="readonly", style="Custom.TCombobox").pack(anchor="w")
+        self._label(margins_row,
+                    "Sí: deja 12 mm para la espiral y 3 mm de seguridad. Izquierda en impares, derecha en pares.",
+                    size=9, color=MUTED, wraplength=830, justify="left").pack(side="left", padx=(18, 0), pady=(12, 0))
         info = tk.Frame(settings, bg=SURFACE)
         info.pack(fill="x", pady=(12, 0))
         self._label(info, "●", color=ACCENT, size=10).pack(side="left")
         self._label(info, "  ", color=MUTED).pack(side="left")
         self._label(info, "", size=10, color=MUTED, textvariable=self.overview).pack(side="left")
-        self._label(info, "  ·  Una fotografía por página en Word y PDF", color=MUTED).pack(side="left")
-        for var in (self.paper, self.orientation, self.dpi, self.fit, self.output_format):
+        self._label(info, "  ·  Una página por hoja en Word y PDF", color=MUTED).pack(side="left")
+        for var in (self.paper, self.orientation, self.dpi, self.fit, self.output_format, self.binding):
             var.trace_add("write", self._update_overview)
 
         content = tk.Frame(self.root, bg=BG, padx=24, pady=16)
@@ -203,18 +221,20 @@ class FotoPapelApp:
         library_top.pack(fill="x")
         title = tk.Frame(library_top, bg=SURFACE)
         title.pack(side="left")
-        self._label(title, "01  FOTOS CARGADAS", size=12, weight="bold").pack(anchor="w")
+        self._label(title, "FOTOS Y PDF CARGADOS", size=12, weight="bold").pack(anchor="w")
         self._label(title, "0 fotos", textvariable=self.count_var, size=10, color=MUTED).pack(anchor="w", pady=(3, 0))
         buttons = tk.Frame(library_top, bg=SURFACE)
         buttons.pack(side="right")
-        self._button(buttons, "+ Añadir fotos", self.add_photos, accent=True, small=True).pack(side="left", padx=(0, 7))
-        self._button(buttons, "Vaciar", self.clear, small=True).pack(side="left")
+        self.add_btn = self._button(buttons, "+ Añadir fotos / PDF", self.add_photos, accent=True, small=True)
+        self.add_btn.pack(side="left", padx=(0, 7))
+        self.clear_btn = self._button(buttons, "Vaciar", self.clear, small=True)
+        self.clear_btn.pack(side="left")
         tk.Frame(left_panel, height=1, bg=BORDER).pack(fill="x")
         self.library_area = ScrollingArea(left_panel)
         self.library_area.pack(fill="both", expand=True, padx=9, pady=9)
         self.library_area.canvas.bind("<Configure>", self._on_library_resize, add="+")
         self.library_placeholder = self._label(
-            self.library_area.inner, "Tus fotos aparecerán aquí.\n\nPulsa «Añadir fotos» para elegir una o varias.\nAdmite JPG, PNG, WEBP, TIFF y BMP.",
+            self.library_area.inner, "Tus fotos y páginas PDF aparecerán aquí.\n\nPulsa «Añadir fotos / PDF» para elegir archivos.\nAdmite JPG, PNG, WEBP, TIFF, BMP y PDF.",
             color=MUTED, size=12, justify="center",
         )
         self.library_placeholder.pack(pady=115)
@@ -223,14 +243,15 @@ class FotoPapelApp:
         ordering_top.pack(fill="x")
         rt = tk.Frame(ordering_top, bg=SURFACE)
         rt.pack(side="left")
-        self._label(rt, "02  ORDEN DE LAS PÁGINAS", size=12, weight="bold").pack(anchor="w")
+        self._label(rt, "ORDEN DE LAS PÁGINAS", size=12, weight="bold").pack(anchor="w")
         self._label(rt, "0 páginas", textvariable=self.page_count_var,
                     size=10, color=MUTED).pack(anchor="w", pady=(3, 0))
-        self._button(ordering_top, "Orden inicial", self.reset_order, small=True).pack(side="right")
+        self.reset_btn = self._button(ordering_top, "Orden inicial", self.reset_order, small=True)
+        self.reset_btn.pack(side="right")
         tk.Frame(right_panel, height=1, bg=BORDER).pack(fill="x")
         hint = tk.Frame(right_panel, bg=ACCENT_DARK, padx=12, pady=9)
         hint.pack(fill="x", padx=12, pady=(12, 2))
-        self._label(hint, "Arrastra a un número, usa las flechas o selecciona foto y posición.",
+        self._label(hint, "Arrastra a un número, usa las flechas o selecciona un elemento y su posición.",
                     size=10, color="#C1F3E5").pack(anchor="w")
         self.order_area = ScrollingArea(right_panel)
         self.order_area.pack(fill="both", expand=True, padx=9, pady=9)
@@ -245,7 +266,7 @@ class FotoPapelApp:
         progress_row = tk.Frame(status_area, bg=BG)
         progress_row.pack(fill="x", pady=(8, 0), padx=(0, 22))
         self.progress = ttk.Progressbar(progress_row, mode="determinate", maximum=100,
-                                         style="FotoPapel.Horizontal.TProgressbar")
+                                         style="Revelo.Horizontal.TProgressbar")
         self.progress.pack(side="left", fill="x", expand=True)
         self._label(progress_row, "", textvariable=self.percent_text, color=ACCENT,
                     weight="bold", size=10, width=7, anchor="e").pack(side="right", padx=(8, 0))
@@ -297,8 +318,12 @@ class FotoPapelApp:
         return self.thumbnails[path]
 
     def add_photos(self):
+        if self.is_busy:
+            return
         names = filedialog.askopenfilenames(
-            title="Selecciona una o varias fotos", filetypes=[
+            title="Selecciona fotos o documentos PDF", filetypes=[
+                ("Fotos y PDF", "*.jpg *.jpeg *.png *.webp *.tif *.tiff *.bmp *.pdf"),
+                ("Documentos PDF", "*.pdf"),
                 ("Imágenes", "*.jpg *.jpeg *.png *.webp *.tif *.tiff *.bmp"),
                 ("Todos los archivos", "*.*"),
             ],
@@ -306,32 +331,102 @@ class FotoPapelApp:
         if names:
             self.import_paths([Path(f) for f in names])
 
+    def _set_busy(self, active: bool):
+        self.is_busy = active
+        state = "disabled" if active else "normal"
+        for button in (self.add_btn, self.clear_btn, self.reset_btn,
+                       self.preview_btn, self.export_btn):
+            button.configure(state=state)
+
     def import_paths(self, incoming):
-        new_count = 0
-        errors = []
-        for path in incoming:
-            path = Path(path).expanduser().resolve()
-            if path in self.paths:
-                continue
-            if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
-                errors.append(f"{path.name}: formato no admitido")
-                continue
+        """Carga fotos y convierte páginas PDF en segundo plano para no bloquear la ventana."""
+        if self.is_busy:
+            return
+        selected = []
+        for file in incoming:
+            file = Path(file).expanduser().resolve()
+            if file not in selected:
+                selected.append(file)
+        if not selected:
+            return
+        existing = set(self.paths)
+        imported_pdfs = set(self.pdf_origins.values())
+        self._set_busy(True)
+        self.feedback.set("Importando archivos… No se modificará ninguno de los originales.")
+        self.progress["value"] = 0
+        self.percent_text.set("(0 %)")
+        self._close_preview()
+
+        def do_import():
+            items = []   # (imagen, dimensiones, nombre visible, pdf_origen)
+            errors = []
+            detected_paper = None
+            mixed_pdf = False
+            seen = set()
+            for source in selected:
+                if source in seen:
+                    continue
+                seen.add(source)
+                if source.suffix.lower() == ".pdf":
+                    if source in imported_pdfs:
+                        continue
+                    temp_dir = Path(self.pdf_temp.name) / uuid.uuid4().hex
+                    try:
+                        images, sizes = import_pdf_pages(
+                            source, temp_dir,
+                            progress=lambda i, n, name: self.updates.put(("import_progress", i, n, name)),
+                        )
+                        paper, has_mixed = matched_paper(sizes)
+                        if detected_paper is None:
+                            detected_paper = paper
+                        mixed_pdf = mixed_pdf or has_mixed
+                        for number, image in enumerate(images, 1):
+                            dims = source_dimensions(image)
+                            items.append((image, dims, f"{source.name} · pág. {number}", source))
+                    except Exception as error:
+                        errors.append(f"{source.name}: {error}")
+                elif source.suffix.lower() in SUPPORTED_EXTENSIONS:
+                    if source in existing:
+                        continue
+                    try:
+                        items.append((source, source_dimensions(source), source.name, None))
+                    except (OSError, ValueError, SyntaxError) as error:
+                        errors.append(f"{source.name}: no se pudo leer ({error})")
+                else:
+                    errors.append(f"{source.name}: formato no admitido")
+            self.updates.put(("import_done", items, detected_paper, mixed_pdf, errors))
+
+        threading.Thread(target=do_import, daemon=True).start()
+
+    def _finish_import(self, items, detected_paper, mixed_pdf, errors):
+        was_empty = not self.paths
+        count = 0
+        for path, dims, label, origin in items:
             try:
-                dims = source_dimensions(path)
                 self._thumbnail(path)
-            except (OSError, ValueError, SyntaxError) as e:
-                errors.append(f"{path.name}: no se pudo leer ({e})")
+            except (OSError, ValueError, SyntaxError) as error:
+                errors.append(f"{label}: no se pudo mostrar ({error})")
                 continue
             self.details[path] = dims
+            self.path_labels[path] = label
+            if origin is not None:
+                self.pdf_origins[path] = origin
             self.paths.append(path)
             self.pages.append(path)
-            new_count += 1
-        if new_count:
-            self.render_library()
-            self.render_order()
-            self.feedback.set(f"{len(self.paths)} foto(s) listas. Puedes previsualizarlas antes de exportar.")
+            count += 1
+        if count and was_empty and detected_paper:
+            self.paper.set(detected_paper)
+        self.render_library()
+        self.render_order()
+        self._set_busy(False)
+        if count:
+            self.feedback.set(f"{len(self.paths)} elementos listos. Ordena y previsualiza antes de exportar.")
+        else:
+            self.feedback.set("No se añadieron nuevos elementos.")
+        if mixed_pdf:
+            errors.append("El PDF incluye tamaños de página distintos: el tamaño de exportación será el seleccionado arriba.")
         if errors:
-            messagebox.showwarning("Algunas fotos no se han añadido", "\n".join(errors[:10]))
+            messagebox.showwarning("Avisos de importación", "\n".join(errors[:10]))
 
     def remove_photo(self, path: Path):
         if path not in self.paths or self.is_busy:
@@ -341,23 +436,25 @@ class FotoPapelApp:
         self.thumbnails.pop(path, None)
         self.thumbnails_small.pop(path, None)
         self.details.pop(path, None)
+        self.path_labels.pop(path, None)
+        self.pdf_origins.pop(path, None)
         if self.selected == path:
             self.selected = None
         self.render_library()
         self.render_order()
-        if not self.pages:
-            self._close_preview()
         self.feedback.set(f"Quitada de la lista: {path.name}. El archivo original se conserva.")
 
     def clear(self):
         if not self.paths:
             return
-        if messagebox.askyesno("Vaciar fotos", "¿Quitar todas las fotos de la lista?\nLos originales no se borrarán."):
+        if messagebox.askyesno("Vaciar lista", "¿Quitar todas las fotos y páginas PDF de la lista?\nLos originales no se borrarán."):
             self.paths.clear()
             self.pages.clear()
             self.thumbnails.clear()
             self.thumbnails_small.clear()
             self.details.clear()
+            self.path_labels.clear()
+            self.pdf_origins.clear()
             self.selected = None
             self.render_library()
             self.render_order()
@@ -368,7 +465,7 @@ class FotoPapelApp:
         if self.paths:
             self.pages = self.paths.copy()
             self.render_order()
-            self.feedback.set("Restaurado el orden en que cargaste las fotos.")
+            self.feedback.set("Restaurado el orden en que cargaste las fotos y los PDF.")
 
     def _on_library_resize(self, event):
         cols = 3 if event.width >= 560 else 2 if event.width >= 345 else 1
@@ -383,10 +480,10 @@ class FotoPapelApp:
 
     def render_library(self):
         self._clear_children(self.library_area.inner)
-        self.count_var.set(f"{len(self.paths)} foto{'s' if len(self.paths) != 1 else ''}")
+        self.count_var.set(f"{len(self.paths)} elemento{'s' if len(self.paths) != 1 else ''}")
         if not self.paths:
             self._label(self.library_area.inner,
-                        "Tus fotos aparecerán aquí.\n\nPulsa «Añadir fotos» para elegir una o varias.\nAdmite JPG, PNG, WEBP, TIFF y BMP.",
+                        "Tus fotos y páginas PDF aparecerán aquí.\n\nPulsa «Añadir fotos / PDF» para elegir archivos.\nAdmite JPG, PNG, WEBP, TIFF, BMP y PDF.",
                         color=MUTED, size=12, justify="center").pack(pady=115)
             return
         for column in range(self.library_cols):
@@ -402,11 +499,13 @@ class FotoPapelApp:
             thumb = tk.Label(card, image=self._thumbnail(path), bg=SURFACE_2,
                              borderwidth=0, cursor="hand2")
             thumb.pack(fill="x")
-            name = path.name if len(path.name) <= 28 else path.stem[:20] + "…" + path.suffix
+            display_name = self.path_labels.get(path, path.name)
+            name = display_name if len(display_name) <= 30 else display_name[:27] + "…"
             lbl = self._label(card, name, size=10, weight="bold", bg=SURFACE_2, anchor="w")
             lbl.pack(fill="x", pady=(6, 0))
             w, h = self.details[path]
-            meta = self._label(card, f"{w} × {h} px  ·  {path.suffix[1:].upper()}",
+            kind = "PDF" if path in self.pdf_origins else path.suffix[1:].upper()
+            meta = self._label(card, f"{w} × {h} px  ·  {kind}",
                                size=9, color=MUTED, bg=SURFACE_2, anchor="w")
             meta.pack(fill="x", pady=(2, 0))
             remove = tk.Button(card, text="×", command=lambda p=path: self.remove_photo(p),
@@ -422,7 +521,7 @@ class FotoPapelApp:
     def _show_empty_order(self):
         self._clear_children(self.order_area.inner)
         self._label(self.order_area.inner,
-                    "Aquí aparecerán las posiciones 1, 2, 3…\n\nCada posición será una página de tu PDF o Word.",
+                    "Aquí aparecerán las posiciones 1, 2, 3…\n\nCada posición será una página del documento exportado.",
                     color=MUTED, size=11, justify="center").pack(pady=100)
 
     def render_order(self):
@@ -446,7 +545,8 @@ class FotoPapelApp:
             thumb.pack(side="left", padx=(0, 10))
             text_box = tk.Frame(slot, bg=SURFACE_2)
             text_box.pack(side="left", fill="x", expand=True)
-            short = path.name if len(path.name) <= 35 else path.name[:31] + "…"
+            display_name = self.path_labels.get(path, path.name)
+            short = display_name if len(display_name) <= 35 else display_name[:31] + "…"
             name = self._label(text_box, short, weight="bold", size=10, bg=SURFACE_2, anchor="w")
             name.pack(fill="x")
             dim = self.details.get(path, (0, 0))
@@ -486,7 +586,7 @@ class FotoPapelApp:
             self.pages.pop(old)
             self.pages.insert(index, path)
             self.render_order()
-            self.feedback.set(f"«{path.name}» pasa a la posición {index + 1}.")
+            self.feedback.set(f"«{self.path_labels.get(path, path.name)}» pasa a la posición {index + 1}.")
 
     def _make_draggable(self, widget, path):
         widget.bind("<ButtonPress-1>", lambda e, p=path: self._drag_press(e, p))
@@ -516,7 +616,7 @@ class FotoPapelApp:
                 self.drag_ghost.attributes("-alpha", 0.9)
             except tk.TclError:
                 pass
-            tk.Label(self.drag_ghost, text=f"  ↕  {self.drag_source.name[:31]}  ",
+            tk.Label(self.drag_ghost, text=f"  ↕  {self.path_labels.get(self.drag_source, self.drag_source.name)[:31]}  ",
                      bg=ACCENT, fg=BG, padx=9, pady=7,
                      font=("Segoe UI", 10, "bold")).pack()
         if self.drag_ghost:
@@ -563,6 +663,7 @@ class FotoPapelApp:
         return ExportOptions(
             paper=self.paper.get(), orientation=self.orientation.get(),
             fit=self.fit.get(), dpi=int(self.dpi.get()), fmt=fmt,
+            binding=self.binding.get() == "Sí",
         )
 
     def open_preview(self):
@@ -576,7 +677,7 @@ class FotoPapelApp:
             self._show_preview_page()
             return
         window = tk.Toplevel(self.root)
-        window.title("FotoPapel · Previsualización de impresión")
+        window.title("Revelo · Previsualización de impresión")
         window.geometry("990x770")
         window.minsize(520, 480)
         window.configure(bg=BG)
@@ -592,7 +693,7 @@ class FotoPapelApp:
         top.pack(fill="x")
         self._label(top, "VISTA PREVIA DE IMPRESIÓN", size=15,
                     weight="bold").pack(anchor="w")
-        self._label(top, "Comprueba el encaje real. No se exportará nada hasta que pulses Exportar fotos.",
+        self._label(top, "Comprueba cada página. No se exportará nada hasta que pulses Exportar fotos.",
                     color=MUTED, size=10).pack(anchor="w", pady=(5, 0))
 
         canvas_shell = tk.Frame(window, bg=SURFACE, padx=10, pady=10,
@@ -648,21 +749,24 @@ class FotoPapelApp:
             return
         self.preview_index = min(self.preview_index, len(self.pages) - 1)
         path = self.pages[self.preview_index]
-        self.preview_page_text.set(f"Página {self.preview_index + 1} de {len(self.pages)}  ·  {path.name}")
+        self.preview_page_text.set(
+            f"Página {self.preview_index + 1} de {len(self.pages)}  ·  {self.path_labels.get(path, path.name)}")
         self.preview_prev_btn.configure(state="normal" if self.preview_index > 0 else "disabled")
         self.preview_next_btn.configure(state="normal" if self.preview_index < len(self.pages) - 1 else "disabled")
         try:
             rendered, (w_mm, h_mm), lowres = render_print_image(
-                path, self._options(), preview_max_size=(1100, 850)
+                path, self._options(), preview_max_size=(1100, 850),
+                page_index=self.preview_index,
             )
             old = self.preview_image
             self.preview_image = rendered
             if old is not None:
                 old.close()
-            notice = " · Atención: foto original de poca resolución" if lowres else ""
+            notice = " · Atención: elemento de poca resolución" if lowres else ""
+            bind_note = (" · Encuadernación: " + ("izquierda" if self.preview_index % 2 == 0 else "derecha")) if self.binding.get() == "Sí" else ""
             self.preview_detail_text.set(
                 f"{self.paper.get()}  ·  {w_mm:g} × {h_mm:g} mm  ·  {self.fit.get()}"
-                f"  ·  Salida: {self.dpi.get()} PPP{notice}"
+                f"  ·  Salida: {self.dpi.get()} PPP{bind_note}{notice}"
             )
             self._paint_preview()
         except Exception as exc:
@@ -706,10 +810,10 @@ class FotoPapelApp:
         if self.is_busy:
             return
         if not self.pages:
-            messagebox.showinfo("Faltan fotos", "Añade una o varias fotos antes de exportar.")
+            messagebox.showinfo("Faltan páginas", "Añade fotos o PDF antes de exportar.")
             return
         opts = self._options()
-        suggested = f"FotoPapel_{opts.paper.replace(' × ', 'x').replace(' ', '')}"
+        suggested = f"Revelo_{opts.paper.replace(' × ', 'x').replace(' ', '')}"
         if opts.fmt == "Imagenes":
             dest_name = filedialog.askdirectory(title="¿Dónde guardar las fotos redimensionadas?")
         else:
@@ -722,12 +826,16 @@ class FotoPapelApp:
         if not dest_name:
             return
         dest = Path(dest_name)
+        # Nunca se permite reemplazar por accidente un PDF que se haya importado.
+        if opts.fmt != "Imagenes" and dest.resolve() in set(self.pdf_origins.values()):
+            messagebox.showwarning("Conserva el PDF original",
+                "Has elegido el mismo PDF que has importado.\nGuarda el nuevo documento con otro nombre para conservar el recetario original.")
+            return
         if opts.fmt != "Imagenes" and dest.exists():
             if not messagebox.askyesno("Sobrescribir documento", "Ese archivo ya existe. ¿Quieres sustituirlo?"):
                 return
-        self.is_busy = True
-        self.export_btn.configure(state="disabled", text="Exportando…")
-        self.preview_btn.configure(state="disabled")
+        self._set_busy(True)
+        self.export_btn.configure(text="Exportando…")
         self.progress["value"] = 0
         self.percent_text.set("(0 %)")
         self.feedback.set("Preparando las fotografías…")
@@ -748,7 +856,18 @@ class FotoPapelApp:
         try:
             while True:
                 event = self.updates.get_nowait()
-                if event[0] == "progress":
+                if event[0] == "import_progress":
+                    _, current, total, name = event
+                    percent = round(100 * current / total)
+                    self.progress["value"] = percent
+                    self.percent_text.set(f"({percent} %)")
+                    self.feedback.set(f"Leyendo {name}: página {current}/{total}  ({percent} %)")
+                elif event[0] == "import_done":
+                    _, items, detected_paper, mixed_pdf, errors = event
+                    self._finish_import(items, detected_paper, mixed_pdf, errors)
+                    self.progress["value"] = 0
+                    self.percent_text.set("(0 %)")
+                elif event[0] == "progress":
                     _, current, total, name = event
                     percent = round(100 * current / total)
                     self.progress["value"] = percent
@@ -756,22 +875,20 @@ class FotoPapelApp:
                     self.feedback.set(f"Procesando {current}/{total}: {name}  ({percent} %)")
                 elif event[0] == "success":
                     _, result, warning_count, count = event
-                    self.is_busy = False
-                    self.export_btn.configure(state="normal", text="Exportar fotos   →")
-                    self.preview_btn.configure(state="normal")
+                    self._set_busy(False)
+                    self.export_btn.configure(text="Exportar fotos   →")
                     self.progress["value"] = 100
                     self.percent_text.set("(100 %)")
                     self.output_path = Path(result)
                     self.open_btn.configure(state="normal")
-                    self.feedback.set(f"✓ {count} foto(s) exportadas. Resultado: {self.output_path.name}")
+                    self.feedback.set(f"✓ {count} página(s) exportadas. Resultado: {self.output_path.name}")
                     note = (f"\n\nAtención: {warning_count} foto(s) se han ampliado bastante. "
                             "Puede que se vean borrosas al imprimir." if warning_count else "")
                     messagebox.showinfo("Exportación completada",
-                                        f"Se han preparado {count} foto(s).\n\nGuardado en:\n{result}{note}")
+                                        f"Se han preparado {count} página(s).\n\nGuardado en:\n{result}{note}")
                 elif event[0] == "error":
-                    self.is_busy = False
-                    self.export_btn.configure(state="normal", text="Exportar fotos   →")
-                    self.preview_btn.configure(state="normal")
+                    self._set_busy(False)
+                    self.export_btn.configure(text="Exportar fotos   →")
                     self.progress["value"] = 0
                     self.percent_text.set("(0 %)")
                     self.feedback.set("No se pudo completar la exportación.")
@@ -779,6 +896,14 @@ class FotoPapelApp:
         except queue.Empty:
             pass
         self.root.after(120, self._poll)
+
+    def _on_close(self):
+        if self.is_busy:
+            messagebox.showinfo("Operación en curso", "Termina de importar o exportar antes de cerrar Revelo.")
+            return
+        self._close_preview()
+        self.pdf_temp.cleanup()
+        self.root.destroy()
 
     def open_result(self):
         if not self.output_path:
@@ -803,7 +928,8 @@ def main():
             root.iconbitmap(str(ico))
     except tk.TclError:
         pass
-    FotoPapelApp(root)
+    application = ReveloApp(root)
+    root.protocol("WM_DELETE_WINDOW", application._on_close)
     root.mainloop()
 
 

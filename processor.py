@@ -1,4 +1,4 @@
-"""Núcleo de impresión y exportación de FotoPapel.
+"""Núcleo de impresión y exportación de Revelo.
 
 Dependencias: Pillow, reportlab y python-docx. No utiliza servicios web.
 """
@@ -51,6 +51,7 @@ class ExportOptions:
     fit: str = "Ajustar (sin recortar)"  # Mantener proporción, recortar, suave, fondo extendido
     dpi: int = 300
     fmt: str = "PDF"  # Imagenes / PDF / Word
+    binding: bool = False  # Reserva canal interior para encuadernación
 
     def validate(self) -> None:
         if self.paper not in PAPER_SIZES:
@@ -61,6 +62,8 @@ class ExportOptions:
             raise ValueError("Modo de encaje no reconocido")
         if not (72 <= self.dpi <= 600):
             raise ValueError("Los PPP deben estar entre 72 y 600")
+        if not isinstance(self.binding, bool):
+            raise ValueError("Márgenes de encuadernación no reconocidos")
         if self.fmt not in ("Imagenes", "PDF", "Word"):
             raise ValueError("Formato de salida no reconocido")
 
@@ -155,57 +158,99 @@ def _extended_background(source: Image.Image, size: tuple[int, int]) -> Image.Im
     return blurred
 
 
-def render_print_image(
-    path: Path, opts: ExportOptions, *, preview_max_size: tuple[int, int] | None = None
-) -> tuple[Image.Image, tuple[float, float], bool]:
-    """Prepara la imagen para imprimir, o una previsualización del mismo encaje.
+# Márgenes de seguridad en papel cuando hay encuadernación a doble cara.
+INNER_MARGIN_MM = 12.0
+OUTER_MARGIN_MM = 3.0
 
-    Para la previsualización limita el número de píxeles, pero conserva las
-    proporciones físicas de la hoja y el mismo algoritmo de composición.
+
+def printable_box(size: tuple[int, int], physical_mm: tuple[float, float], *,
+                  binding: bool = False, page_index: int = 0) -> tuple[int, int, int, int]:
+    """Área imprimible (x0, y0, x1, y1). Páginas impares: canal a la izquierda.
+
+    Coordenadas proporcionales al papel: idéntica geometría en previsualización
+    y salida final, con independencia de la resolución escogida.
+    """
+    w, h = size
+    if not binding:
+        return 0, 0, w, h
+    w_mm, h_mm = physical_mm
+    left_mm, right_mm = ((INNER_MARGIN_MM, OUTER_MARGIN_MM)
+                         if page_index % 2 == 0 else (OUTER_MARGIN_MM, INNER_MARGIN_MM))
+    x0 = round(left_mm / w_mm * w)
+    x1 = w - round(right_mm / w_mm * w)
+    y0 = round(OUTER_MARGIN_MM / h_mm * h)
+    y1 = h - round(OUTER_MARGIN_MM / h_mm * h)
+    if x1 <= x0 or y1 <= y0:
+        raise ValueError("El papel es demasiado pequeño para los márgenes de encuadernación")
+    return x0, y0, x1, y1
+
+
+def _render_inside(im: Image.Image, size: tuple[int, int], fit: str) -> Image.Image:
+    """Compone la foto en un rectángulo disponible, sin conocer el papel."""
+    out_w, out_h = size
+    if fit == "Rellenar (recortar)":
+        return ImageOps.fit(im, (out_w, out_h), method=Image.Resampling.LANCZOS,
+                            centering=(0.5, 0.5))
+    inside = ImageOps.contain(im, (out_w, out_h), method=Image.Resampling.LANCZOS)
+    if fit == "Ajuste inteligente (máx. 5 %)":
+        new_w = min(out_w, max(1, round(inside.width * 1.05)))
+        new_h = min(out_h, max(1, round(inside.height * 1.05)))
+        if (new_w, new_h) != inside.size:
+            resized = inside.resize((new_w, new_h), Image.Resampling.LANCZOS)
+            inside.close()
+            inside = resized
+        result = _soft_edge_background(inside, (out_w, out_h))
+    elif fit == "Ampliar fondo (sin recortar)":
+        result = _extended_background(im, (out_w, out_h))
+    else:
+        result = Image.new("RGB", (out_w, out_h), "white")
+    result.paste(inside, ((out_w - inside.width) // 2, (out_h - inside.height) // 2))
+    inside.close()
+    return result
+
+
+def render_print_image(
+    path: Path, opts: ExportOptions, *, preview_max_size: tuple[int, int] | None = None,
+    page_index: int = 0,
+) -> tuple[Image.Image, tuple[float, float], bool]:
+    """Prepara la imagen final o una previsualización de idéntico encaje.
+
+    El canal de encuadernación queda siempre blanco, incluso en modo rellenar.
     """
     opts.validate()
     w_mm, h_mm = dimensions_mm(path, opts)
     out_w, out_h = pixel_size(w_mm, h_mm, opts.dpi)
     full_w, full_h = out_w, out_h
+    full_box = printable_box((out_w, out_h), (w_mm, h_mm),
+                             binding=opts.binding, page_index=page_index)
     if preview_max_size is not None:
         max_w, max_h = preview_max_size
         if max_w <= 0 or max_h <= 0:
             raise ValueError("Las dimensiones de previsualización deben ser positivas")
         scale = min(1.0, max_w / out_w, max_h / out_h)
         out_w, out_h = max(1, round(out_w * scale)), max(1, round(out_h * scale))
+    box = printable_box((out_w, out_h), (w_mm, h_mm),
+                        binding=opts.binding, page_index=page_index)
+    use_w, use_h = full_box[2] - full_box[0], full_box[3] - full_box[1]
     with Image.open(path) as raw:
         im = _flatten_rgb(ImageOps.exif_transpose(raw))
     try:
         sw, sh = im.size
-        # La advertencia depende de la resolución REAL de exportación, incluso
-        # cuando se está mostrando una previsualización de menor resolución.
-        fill_factor = max(full_w / sw, full_h / sh)
-        contain_factor = min(full_w / sw, full_h / sh)
+        fill_factor = max(use_w / sw, use_h / sh)
+        contain_factor = min(use_w / sw, use_h / sh)
         low_resolution = (fill_factor if opts.fit == "Rellenar (recortar)" else contain_factor) > 1.25
-        if opts.fit == "Rellenar (recortar)":
-            result = ImageOps.fit(im, (out_w, out_h), method=Image.Resampling.LANCZOS,
-                                  centering=(0.5, 0.5))
-        else:
-            inside = ImageOps.contain(im, (out_w, out_h), method=Image.Resampling.LANCZOS)
-            if opts.fit == "Ajuste inteligente (máx. 5 %)":
-                # Máximo un 5 % de estiramiento de la dimensión que sobra;
-                # nunca recorta ni cambia las proporciones de la otra.
-                new_w = min(out_w, max(1, round(inside.width * 1.05)))
-                new_h = min(out_h, max(1, round(inside.height * 1.05)))
-                if (new_w, new_h) != inside.size:
-                    resized = inside.resize((new_w, new_h), Image.Resampling.LANCZOS)
-                    inside.close()
-                    inside = resized
-                result = _soft_edge_background(inside, (out_w, out_h))
-            elif opts.fit == "Ampliar fondo (sin recortar)":
-                result = _extended_background(im, (out_w, out_h))
-            else:
-                result = Image.new("RGB", (out_w, out_h), "white")
-            result.paste(inside, ((out_w - inside.width) // 2, (out_h - inside.height) // 2))
-            inside.close()
+        result_inner = _render_inside(im, (box[2] - box[0], box[3] - box[1]), opts.fit)
+        if not opts.binding:
+            return result_inner, (w_mm, h_mm), low_resolution
+        try:
+            paper = Image.new("RGB", (out_w, out_h), "white")
+            paper.paste(result_inner, (box[0], box[1]))
+        finally:
+            result_inner.close()
+        return paper, (w_mm, h_mm), low_resolution
     finally:
         im.close()
-    return result, (w_mm, h_mm), low_resolution
+
 
 def _safe_basename(text: str) -> str:
     return re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", text).strip(" .") or "foto"
@@ -254,11 +299,11 @@ def export_images(paths: Sequence[Path], opts: ExportOptions, dest: Path, progre
         raise ValueError("No hay fotos para exportar")
     dest.mkdir(parents=True, exist_ok=True)
     label = _safe_basename(opts.paper.replace(" × ", "x").replace(" ", ""))
-    folder = _distinct_file(dest, f"FotoPapel_{label}_{datetime.now():%Y%m%d_%H%M%S}", "")
+    folder = _distinct_file(dest, f"Revelo_{label}_{datetime.now():%Y%m%d_%H%M%S}", "")
     folder.mkdir()
     lowres_count = 0
     for i, path in enumerate(paths, 1):
-        rendered, _, lowres = render_print_image(path, opts)
+        rendered, _, lowres = render_print_image(path, opts, page_index=i - 1)
         lowres_count += int(lowres)
         out_base = _safe_basename(f"{i:02d}_{path.stem}_{label}")
         _save_original_format(rendered, folder / out_base, path, opts.dpi)
@@ -275,11 +320,11 @@ def export_pdf(paths: Sequence[Path], opts: ExportOptions, target: Path, progres
     opts.validate()
     target.parent.mkdir(parents=True, exist_ok=True)
     document = Canvas(str(target), pagesize=(595, 842), pageCompression=1)
-    document.setTitle(f"FotoPapel · {opts.paper}")
+    document.setTitle(f"Revelo · {opts.paper}")
     lowres_count = 0
     try:
         for i, path in enumerate(paths, 1):
-            rendered, (w_mm, h_mm), lowres = render_print_image(path, opts)
+            rendered, (w_mm, h_mm), lowres = render_print_image(path, opts, page_index=i - 1)
             lowres_count += int(lowres)
             w_pt, h_pt = w_mm * 72 / 25.4, h_mm * 72 / 25.4
             document.setPageSize((w_pt, h_pt))
@@ -356,7 +401,7 @@ def export_word(paths: Sequence[Path], opts: ExportOptions, target: Path, progre
     style.paragraph_format.line_spacing = Pt(1)
     lowres_count = 0
     for i, path in enumerate(paths, 1):
-        rendered, (w_mm, h_mm), lowres = render_print_image(path, opts)
+        rendered, (w_mm, h_mm), lowres = render_print_image(path, opts, page_index=i - 1)
         lowres_count += int(lowres)
         if i == 1:
             section = document.sections[0]
@@ -381,7 +426,7 @@ def export_word(paths: Sequence[Path], opts: ExportOptions, target: Path, progre
         rendered.close()
         if progress:
             progress(i, len(paths), path.name)
-    document.core_properties.title = f"FotoPapel · {opts.paper}"
+    document.core_properties.title = f"Revelo · {opts.paper}"
     document.save(str(target))
     return target, lowres_count
 

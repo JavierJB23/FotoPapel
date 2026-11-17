@@ -1,117 +1,87 @@
-FOTOPAPEL v1.1 — CONVERSOR Y ORGANIZADOR DE FOTOS PARA IMPRIMIR
+REVELO v1.2 — FOTOS, PDF Y DOCUMENTOS LISTOS PARA IMPRIMIR
 ==========================================================
-Programa gratuito para Windows, sin publicidad, sin registro y sin subir fotos a internet.
+Aplicación gratuita para Windows, totalmente local: tus fotografías y PDF
+no se suben a Internet. No necesita registro ni suscripción.
 
+QUÉ HA CAMBIADO DESDE FOTOPAPEL v1.1
+-----------------------------------
+- El programa se llama Revelo. El ejecutable será Revelo.exe y lleva el nuevo icono R.
+- Nuevo desplegable "MÁRGENES DE ENCUADERNACIÓN" con Sí y No.
+  Al elegir Sí, reserva 12 mm en el lado de la encuadernación y 3 mm en el
+  resto. En páginas impares va a la izquierda y en páginas pares a la
+  derecha, pensado para impresión a doble cara y espiral a la izquierda.
+  Se aplica también en Rellenar (recortar), PDF, Word, JPG/PNG y vista previa.
+- Nuevo botón "+ Añadir fotos / PDF". Elige fotos, uno o varios PDF o ambos.
+  Cada página PDF aparece individualmente con miniatura, manteniendo su orden.
+  Después puedes añadir fotos, moverlas a cualquier posición y exportar otro PDF.
+- Si empiezas importando un PDF con tamaño comercial reconocible (A4, A5,
+  etc.), Revelo ajusta automáticamente el desplegable de tamaño. Si el PDF
+  trae páginas con tamaños diferentes, muestra un aviso.
+- Quitados los prefijos 01 y 02 de los títulos de los dos paneles.
+- Continúan los 4 encajes de v1.1, la previsualización y el progreso aguamarina.
 
-NOVEDADES v1.1
---------------
- - Ajuste inteligente (max. 5 %): conserva toda la imagen y permite un
-   estiramiento limitado para reducir las bandas; el espacio que quede
-   se rellena con colores extraidos de los bordes (no blanco).
- - Ampliar fondo (sin recortar): conserva toda la imagen sin deformarla
-   y rellena las bandas con un fondo difuminado derivado de la foto.
-   No utiliza IA generativa ni inventa detalles nuevos.
- - Boton Previsualización junto a Exportar fotos: enseña la pagina antes
-   de exportar, con flechas para navegar las fotos en el orden elegido.
-   Los cambios de encaje o tamaño se reflejan en la previsualización.
- - Barra de avance aguamarina y porcentaje de progreso entre parentesis.
- - 300 PPP como calidad inicial recomendada.
+IMPORTANTE SOBRE LOS PDF
+-----------------------
+Se conserva visualmente cada PÁGINA COMPLETA (fondos, fotos, letras, dibujos),
+como imagen PNG temporal renderizada a 300 PPP. No recupera las fotografías
+originales por separado ni los textos como elementos editables. Al exportar,
+las páginas se vuelven a generar: si son documentos de texto muy pequeño,
+revisa el resultado en la previsualización y exporta a 300 PPP o más.
 
-PARA ACTUALIZAR UN REPOSITORIO QUE YA TIENE FOTOPAPEL v1.0
----------------------------------------------------------
- 1. Abre el repositorio FotoPapel en GitHub.
- 2. Pulsa 'Add file' > 'Upload files'.
- 3. Sube main.py, processor.py y README_PRIMERO.txt DE LA VERSION v1.1.
-    Confirma la sustitución de los archivos existentes si se solicita.
- 4. Pulsa 'Commit changes'.
- 5. En 'Actions' se generara automaticamente un NUEVO FotoPapel.exe.
-    Abre el trabajo reciente con el icono verde y descarga su artifact.
- 6. Descomprime el ZIP de GitHub, cierra el programa antiguo y abre
-    FotoPapel.exe nuevo. No hay que instalar nada.
- No hace falta volver a subir la carpeta .github, ni el icono.
+Los originales NO se modifican. Revelo impide expresamente que se sobrescriba
+el PDF que has importado: tendrás que guardar una copia con otro nombre.
+Las páginas PNG temporales se borran al cerrar el programa.
+Los PDF protegidos con contraseña no se importan en esta versión.
 
-PARA CONSEGUIR EL .EXE (EL METODO RECOMENDADO, SIN INSTALAR NADA)
-----------------------------------------------------------------
-Esta entrega incluye el código de la aplicación y una compilación automática
-lista para usar en GitHub Actions. El resultado es un FotoPapel.exe autónomo.
+Si importas un PDF que ya tuviera márgenes para espiral, puedes seleccionar
+MÁRGENES DE ENCUADERNACIÓN = No para no añadir un segundo margen extra.
 
- 1. Entra en github.com y accede a tu cuenta.
- 2. Pulsa '+' > 'New repository'. Ponle el nombre FotoPapel.
- 3. Deja marcado 'Public' (para evitar costes de GitHub Actions).
-    No añadas archivos iniciales: sin README ni .gitignore.
- 4. Pulsa 'Create repository'.
- 5. En la pantalla del repositorio, sigue el enlace 'uploading an existing file'.
- 6. Abre el ZIP recibido y EXTRAE todos los archivos y carpetas.
- 7. IMPORTANTE: sube main.py, processor.py, icono.ico, requirements.txt,
-    compilar_en_windows.bat, README_PRIMERO.txt y la carpeta .github (oculta).
-    Para que aparezca el workflow, debe quedar así:
-       .github/workflows/windows-exe.yml
-    Como el navegador puede ocultar carpetas con punto inicial, si falta
-    el workflow usa GitHub > Add file > Create new file y escribe la ruta
-    '.github/workflows/windows-exe.yml', copiando el contenido del ZIP.
- 8. Pulsa 'Commit changes'.
- 9. Abre la pestaña 'Actions', entra en 'Crear EXE de FotoPapel'.
-    Si no comienza solo, pulsa 'Run workflow' > 'Run workflow'.
-10. Cuando termine correctamente (marca verde), abre esa ejecución.
-11. En 'Artifacts' descarga 'FotoPapel-Windows-EXE'. Descomprime ese ZIP.
-12. ¡LISTO! Dentro está FotoPapel.exe. Abre con doble clic.
+CÓMO USARLO PARA TU RECETARIO
+----------------------------
+1. Abre Revelo.exe.
+2. Pulsa "+ Añadir fotos / PDF" y elige el PDF antiguo.
+3. Verás una miniatura por página, con el mismo orden del PDF original.
+4. Pulsa de nuevo "+ Añadir fotos / PDF" y elige las recetas nuevas.
+5. Arrastra las fotos a las posiciones deseadas o usa las flechas.
+6. Elige A5, calidad 300 PPP y encaje que prefieras.
+7. Márgenes de encuadernación = Sí si quieres reservar el canal interior.
+8. Pulsa "Previsualización" para revisar cada página.
+9. Exporta como PDF (o Word). Pon un nombre NUEVO y guárdalo.
 
-No necesitas instalar Python, ni abrir terminal, ni programar.
-La compilación del .exe se hace en una máquina Windows de GitHub.
+PARA ACTUALIZAR TU REPOSITORIO DE GITHUB (DESDE v1.1)
+---------------------------------------------------
+Necesitas actualizar 6 archivos de la carpeta principal del repositorio:
+  main.py
+  processor.py
+  pdf_import.py                 (nuevo)
+  requirements.txt
+  icono.ico                    (la imagen del icono es nueva)
+  README_PRIMERO.txt
 
-ALTERNATIVA EN TU PROPIO PC
----------------------------
-Si ya tienes Python instalado, puedes ejecutar compilar_en_windows.bat.
-Esto instala automáticamente las dependencias (gratuitas) y crea el .exe
-que aparecerá en la carpeta dist. Si no tienes Python, usa GitHub.
+Pasos:
+ A. Abre tu repositorio: https://github.com/JavierJB23/FotoPapel
+ B. Add file > Upload files. Sube esos 6 archivos DESCOMPRIMIDOS.
+ C. Pulsa Commit changes. Ignora la compilación intermedia si se inicia.
+ D. Edita también el archivo oculto que ya existe en GitHub:
+    .github/workflows/windows-exe.yml
+    - Entra en el archivo, pulsa el lápiz (Edit this file).
+    - Sustituye su contenido por el archivo Windows_Workflow_Revelo.txt
+      incluido en la entrega de Revelo v1.2.
+    - Pulsa Commit changes.
+ E. Entra en la pestaña Actions. Selecciona la ejecución más reciente
+    llamada "Crear EXE de Revelo" y comprueba que tiene marca verde.
+ F. En Artifacts descarga "Revelo-Windows-EXE".
+    Descomprime el ZIP y abre Revelo.exe con doble clic.
 
-COMO SE USA
------------
- 1. Pulsa '+ Añadir fotos'. Puedes seleccionar una o veinte a la vez.
- 2. Elige tamaño: A3, A4, A5, A6, 9x13, 10x15, 11x15, 13x18, etc.
- 3. Elige orientación: automática (según cada imagen), vertical u horizontal.
- 4. Elige cómo encajar las fotos:
-      Ajustar (sin recortar): la foto se ve completa. Si sobra espacio,
-      se deja blanco.
-      Rellenar (recortar): cubre el papel completamente, sin deformar,
-      cortando bordes si las proporciones no coinciden.
-      Ajuste inteligente (max. 5 %): recorta 0 %, estira un poco como
-      maximo y rellena pequeñas bandas con los colores de la imagen.
-      Ampliar fondo (sin recortar): conserva foto sin deformar y rellena
-      el resto con fondo artificial desenfocado a partir de la imagen.
- 5. Elige resolución: 150, 300 o 600 PPP. Se recomienda 300 PPP.
- 6. Elige PDF (un único PDF), Word (un DOCX) o Imágenes (mismo formato).
- 7. Para cambiar el orden, ARRASTRA una foto de la izquierda hasta una
-    posición numerada a la derecha. También puedes usar las flechas ↑ ↓.
-    El orden inicial es el de la carga. 'Orden inicial' lo restaura.
- 8. Pulsa 'Previsualización' para revisar las paginas una a una antes
-    de exportarlas (flechas para moverte entre páginas).
- 9. Pulsa 'Exportar fotos' y elige dónde guardar el resultado.
-    Veras la barra verde aguamarina y el avance (0 %)-(100 %).
+No necesitas Python ni instalar programas de desarrollo en tu PC.
+La compilación automática se ejecuta en Windows dentro de GitHub Actions.
 
-DETALLES DE IMPRESION
----------------------
- - PDF y Word: una foto por página, página del tamaño seleccionado.
- - PDF y Word conservan el orden elegido y admiten páginas horizontales y
-   verticales mezcladas si seleccionas orientación automática.
- - Las imágenes separadas se guardan en una CARPETA NUEVA con nombres
-   numerados 01, 02, 03, etc. Conservan JPG/PNG/TIFF/WEBP/BMP de origen.
- - Las imágenes se preparan en los píxeles correspondientes a la medida
-   elegida y la resolución PPP.
- - JPG, PNG y TIFF incluyen metadatos PPP. Otros formatos como WEBP y BMP
-   pueden no almacenar esa medida de manera reconocida por todos los visores.
- - El PDF y Word contienen el tamaño físico exacto de página. Para imprimir
-   selecciona 'Tamaño real / 100 %' y desactiva 'Ajustar a página' si quieres
-   mantener las dimensiones.
- - Algunas impresoras no imprimen hasta el borde; si ocurre, la impresora
-   podrá añadir márgenes o necesitar el modo de impresión sin bordes.
- - Ampliar una fotografía pequeña no recupera detalle. Se te avisará
-   si hay imágenes de baja resolución para el tamaño escogido.
- - Jamás se modifican las fotografías originales.
+ALTERNATIVA TÉCNICA (NO NECESARIA)
+---------------------------------
+Si ya tienes Python en Windows, ejecuta compilar_en_windows.bat para crear
+Revelo.exe en la carpeta dist, después de instalar las dependencias gratuitas.
 
-REQUISITOS
-----------
-Windows 10/11, 64 bits. No hace falta conexión a internet para usar el .exe.
-
-Dependencias gratuitas y de código abierto: Pillow, ReportLab,
-python-docx y PyInstaller. La interfaz usa Tkinter (Python).
+COMPONENTES LIBRES Y GRATUITOS
+----------------------------
+Python, tkinter, Pillow, ReportLab, python-docx, pypdfium2 y PyInstaller.
+Solo uso personal. No se envían imágenes a ningún servicio remoto.
