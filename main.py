@@ -72,7 +72,7 @@ class ScrollingArea(tk.Frame):
 class ReveloApp:
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("Revelo v1.2.3 · Fotos y PDF listos para imprimir")
+        self.root.title("Revelo v1.2.4 · Fotos y PDF listos para imprimir")
         self.root.geometry("1270x845")
         self.root.minsize(940, 650)
         self.root.configure(bg=BG)
@@ -168,7 +168,7 @@ class ReveloApp:
         htext = tk.Frame(left, bg=BG)
         htext.pack(side="left")
         self._label(htext, "Revelo", size=23, weight="bold").pack(anchor="w")
-        self._label(htext, "Tus fotos y documentos, listos para imprimir  ·  v1.2.3", color=MUTED, size=10).pack(anchor="w")
+        self._label(htext, "Tus fotos y documentos, listos para imprimir  ·  v1.2.4", color=MUTED, size=10).pack(anchor="w")
         self._label(header, "100 % LOCAL  ·  SIN SUBIR FOTOS A INTERNET", color=ACCENT, size=9,
                     weight="bold").pack(side="right")
 

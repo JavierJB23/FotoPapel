@@ -12,7 +12,7 @@ from typing import Callable, Sequence
 import math
 import re
 
-from PIL import Image, ImageOps, ImageFilter, ImageStat, ImageDraw, ImageChops, UnidentifiedImageError
+from PIL import Image, ImageOps, ImageFilter, ImageStat, ImageDraw, UnidentifiedImageError
 
 
 # Anchura x altura en milímetros (orientación vertical).
@@ -140,74 +140,93 @@ def _soft_edge_background(inside: Image.Image, size: tuple[int, int]) -> Image.I
 
 
 def _trim_revelo_like_page_background(source: Image.Image) -> tuple[Image.Image, bool]:
-    """Intenta aislar el contenido útil de una página PDF ya exportada.
+    """Aísla una foto de bandas blancas opuestas en un PDF importado.
 
-    Se usa al reimportar PDFs creados previamente por Revelo. Si la página
-    contiene un gran borde uniforme (normalmente blanco o gris muy claro),
-    lo recorta para poder volver a aplicar el encaje elegido en la sesión
-    actual. Si no detecta un marco suficientemente claro y uniforme, deja la
-    página intacta.
+    Un PDF previo con «Ajustar sin recortar» suele tener bandas *solo*
+    arriba/abajo o izquierda/derecha, pues la foto toca los otros dos bordes.
+    Por ello, cada eje se analiza independientemente. Solo se elimina una
+    pareja de bandas si ambas son grandes y el borde interior está ocupado
+    mayoritariamente por contenido, para no recortar documentos de texto.
+    La detección es conservadora: cuando hay dudas, mantiene la página.
     """
-    if source.width < 40 or source.height < 40:
+    if source.width < 80 or source.height < 80:
         return source.copy(), False
 
-    thumb = source.convert("RGB")
-    scale = min(1.0, 420 / max(thumb.width, thumb.height))
-    if scale < 1.0:
-        thumb = thumb.resize((max(1, round(thumb.width * scale)),
-                              max(1, round(thumb.height * scale))),
-                             Image.Resampling.BILINEAR)
+    ratio = min(1.0, 520 / max(source.width, source.height))
+    thumb_size = (max(1, round(source.width * ratio)),
+                  max(1, round(source.height * ratio)))
+    with source.convert("RGB") as converted:
+        thumb = (converted.resize(thumb_size, Image.Resampling.BILINEAR)
+                 if thumb_size != converted.size else converted.copy())
     try:
         w, h = thumb.size
-        strip = max(4, min(w, h) // 40)
-        corners = [
-            thumb.crop((0, 0, strip, strip)),
-            thumb.crop((w - strip, 0, w, strip)),
-            thumb.crop((0, h - strip, strip, h)),
-            thumb.crop((w - strip, h - strip, w, h)),
-        ]
-        means = [ImageStat.Stat(part).mean[:3] for part in corners]
-        bg = tuple(round(sum(m[i] for m in means) / len(means)) for i in range(3))
-        border_parts = [
-            thumb.crop((0, 0, w, strip)),
-            thumb.crop((0, h - strip, w, h)),
-            thumb.crop((0, 0, strip, h)),
-            thumb.crop((w - strip, 0, w, h)),
-        ]
-        std = max(max(ImageStat.Stat(part).stddev[:3]) for part in border_parts)
-        brightness = sum(bg) / 3
-        if brightness < 205 or std > 16:
-            return source.copy(), False
+        # El blanco del papel tras rasterizar un PDF puede ser algo gris por
+        # interpolación, así que toleramos pequeñas diferencias del blanco.
+        luminance = thumb.convert("L")
+        white_mask = [value >= 243 for value in luminance.tobytes()]
 
-        solid = Image.new("RGB", thumb.size, bg)
-        diff = ImageChops.difference(thumb, solid)
-        mask = diff.convert("L").point(lambda value: 255 if value > 18 else 0)
-        bbox = mask.getbbox()
-        if not bbox:
+        def row_white(y: int) -> float:
+            # Ignoramos solo un borde mínimo: la foto puede llegar a los lados.
+            start = max(1, round(w * .008))
+            end = w - start
+            return sum(white_mask[y * w + start:y * w + end]) / (end - start)
+
+        def column_white(x: int) -> float:
+            margin = max(1, round(h * .008))
+            return sum(white_mask[y * w + x] for y in range(margin, h - margin)) / (h - 2 * margin)
+
+        def leading_blank(length: int, sample, *, reverse: bool = False) -> int:
+            bound = int(length * .36)  # no quitar media página accidentalmente
+            for n in range(bound):
+                pos = length - 1 - n if reverse else n
+                if sample(pos) < .975:
+                    return n
+            return bound
+
+        top = leading_blank(h, row_white)
+        bottom = leading_blank(h, row_white, reverse=True)
+        left = leading_blank(w, column_white)
+        right = leading_blank(w, column_white, reverse=True)
+        # Una pareja debe tener suficiente grosor en ambos lados.
+        min_v = max(5, round(h * .025))
+        min_h = max(5, round(w * .025))
+        vertical = min(top, bottom) >= min_v and top + bottom < h * .60
+        horizontal = min(left, right) >= min_h and left + right < w * .60
+
+        # Aseguramos que el borde interior es realmente una fotografía o
+        # ilustración ocupando el ancho/alto, no una línea de texto flotante.
+        def occupancy_rows(first: int, last: int) -> float:
+            ys = [min(h - 1, first + 2), min(h - 1, first + 4),
+                  max(0, last - 3), max(0, last - 5)]
+            return min(1 - row_white(y) for y in ys)
+
+        def occupancy_columns(first: int, last: int) -> float:
+            xs = [min(w - 1, first + 2), min(w - 1, first + 4),
+                  max(0, last - 3), max(0, last - 5)]
+            return min(1 - column_white(x) for x in xs)
+
+        if vertical and occupancy_rows(top, h - bottom) < .55:
+            vertical = False
+        if horizontal and occupancy_columns(left, w - right) < .55:
+            horizontal = False
+        if not (vertical or horizontal):
             return source.copy(), False
-        left, top, right, bottom = bbox
-        margin_left, margin_top = left, top
-        margin_right, margin_bottom = w - right, h - bottom
-        min_margin = max(8, round(min(w, h) * 0.035))
-        if min(margin_left, margin_top, margin_right, margin_bottom) < min_margin:
-            return source.copy(), False
-        # Evita recortes exagerados cuando el contenido útil ocupa muy poco.
-        if (right - left) < w * 0.45 or (bottom - top) < h * 0.45:
-            return source.copy(), False
-        scale_x = source.width / w
-        scale_y = source.height / h
-        crop = (
-            max(0, math.floor(left * scale_x)),
-            max(0, math.floor(top * scale_y)),
-            min(source.width, math.ceil(right * scale_x)),
-            min(source.height, math.ceil(bottom * scale_y)),
-        )
-        if crop[2] - crop[0] >= source.width - 4 and crop[3] - crop[1] >= source.height - 4:
+        x0 = left if horizontal else 0
+        x1 = w - right if horizontal else w
+        y0 = top if vertical else 0
+        y1 = h - bottom if vertical else h
+
+        # Escalamos la caja de recorte del análisis a la resolución original;
+        # nunca alteramos el PNG temporal ni el PDF original del usuario.
+        crop = (max(0, math.floor(x0 * source.width / w)),
+                max(0, math.floor(y0 * source.height / h)),
+                min(source.width, math.ceil(x1 * source.width / w)),
+                min(source.height, math.ceil(y1 * source.height / h)))
+        if crop[2] - crop[0] < source.width * .4 or crop[3] - crop[1] < source.height * .4:
             return source.copy(), False
         return source.crop(crop), True
     finally:
         thumb.close()
-
 
 def _extended_background(source: Image.Image, size: tuple[int, int]) -> Image.Image:
     """Fondo local difuminado para encajar sin recortes ni deformación.

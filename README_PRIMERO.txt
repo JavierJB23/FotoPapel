@@ -1,26 +1,28 @@
-REVELO v1.2.3 — FOTOS, PDF Y DOCUMENTOS LISTOS PARA IMPRIMIR
+REVELO v1.2.4 — FOTOS, PDF Y DOCUMENTOS LISTOS PARA IMPRIMIR
 ==========================================================
 
-ACTUALIZACIÓN v1.2.3 — FONDOS Y REIMPORTACIÓN DE PDF
-------------------------------------------------
- - Con «Ampliar fondo (sin recortar)» y márgenes de encuadernación: el fondo
-   difuminado cubre toda la hoja, incluido el espacio reservado a la espiral.
-   La fotografía original permanece dentro del área segura de impresión.
- - Las páginas importadas de PDF se reutilizan como páginas completas. No se
-   les añade otro fondo, recorte ni otro margen aunque los ajustes de impresión
-   estén activados para las fotos nuevas. Esto evita el "doble fondo".
- - Los márgenes que YA estuvieran impresos dentro del PDF original se respetan:
-   no se eliminan automáticamente, para no recortar texto ni fotografías.
- - Previsualización, exportación a PDF, Word e imágenes usan el mismo encaje.
+ACTUALIZACIÓN v1.2.4 — QUITAR BANDAS BLANCAS DE PDF ANTIGUOS
+------------------------------------------------------------
+- Corregido el fallo de v1.2.3: el detector anterior requería bandas blancas
+  en los cuatro lados, aunque una foto ajustada suele tenerlas solo ARRIBA y
+  ABAJO o solo a IZQUIERDA y DERECHA.
+- Ahora detecta parejas opuestas de franjas blancas grandes. Si parecen
+  procedentes de la maquetación anterior, recorta solo esos márgenes para
+  volver a aplicar el encaje elegido al importar un PDF de Revelo.
+- Con «Ampliar fondo (sin recortar)», las imágenes recuperadas de PDF antiguos
+  reciben un fondo difuminado igual que las fotografías nuevas.
+- Si no identifica franjas claras, la página PDF se conserva completa para
+  evitar recortes en documentos de texto o maquetaciones poco habituales.
+- La importación y el procesamiento son locales y nunca modifican originales.
 
-CÓMO ACTUALIZAR DESDE v1.2.2 (MUY SENCILLO)
-------------------------------------------
- 1. En el ZIP de actualización encontrarás main.py, processor.py y la carpeta tests.
- 2. En https://github.com/JavierJB23/FotoPapel/upload/main sube los dos archivos
-    principales y la carpeta tests (se actualizará tests/test_processor.py).
- 3. Pulsa «Commit changes». El workflow existente generará Revelo.exe.
- 4. En Actions, descarga el último artifact «Revelo-Windows-EXE» que termine
-    con una marca verde. No hace falta tocar .github ni volver a subir el icono.
+CÓMO ACTUALIZAR DESDE v1.2.3
+---------------------------
+ 1. Descomprime Revelo_v1_2_4_correccion_bandas_PDF.zip.
+ 2. En https://github.com/JavierJB23/FotoPapel/upload/main sube los archivos
+    main.py, processor.py y README_PRIMERO.txt, así como tests/test_processor.py.
+ 3. Confirma la sustitución con «Commit changes».
+ 4. En GitHub Actions, descarga el nuevo artefacto Revelo-Windows-EXE.
+ No necesitas tocar .github/workflows ni el icono. Tampoco instalar Python.
 
 Aplicación gratuita para Windows, totalmente local: tus fotografías y PDF
 no se suben a Internet. No necesita registro ni suscripción.
@@ -44,8 +46,9 @@ QUÉ HA CAMBIADO DESDE FOTOPAPEL v1.1
 
 IMPORTANTE SOBRE LOS PDF
 -----------------------
-Se conserva visualmente cada PÁGINA COMPLETA (fondos, fotos, letras, dibujos),
-como imagen PNG temporal renderizada a 300 PPP. No recupera las fotografías
+Cada página se carga como PNG temporal renderizado a 300 PPP. Si detectamos
+bandas blancas de relleno grandes, podemos separarlas y remaquetar la imagen;
+en caso contrario, preservamos la composición de la página. No recupera las fotografías
 originales por separado ni los textos como elementos editables. Al exportar,
 las páginas se vuelven a generar: si son documentos de texto muy pequeño,
 revisa el resultado en la previsualización y exporta a 300 PPP o más.
@@ -55,8 +58,9 @@ el PDF que has importado: tendrás que guardar una copia con otro nombre.
 Las páginas PNG temporales se borran al cerrar el programa.
 Los PDF protegidos con contraseña no se importan en esta versión.
 
-Si importas un PDF que ya tuviera márgenes para espiral, puedes seleccionar
-MÁRGENES DE ENCUADERNACIÓN = No para no añadir un segundo margen extra.
+Si importas un PDF con márgenes diseñados deliberadamente, comprueba la
+previsualización: la detección automática de bandas nunca es infalible.
+En documentos con texto o diagramas, conviene comprobar que no falte nada.
 
 CÓMO USARLO PARA TU RECETARIO
 ----------------------------
