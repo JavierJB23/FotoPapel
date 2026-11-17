@@ -132,3 +132,108 @@ def test_project_rejects_unexpected_entries_and_corruption(tmp_path):
             out.writestr(item.filename, data)
     with pytest.raises(ProjectError):
         load_project(fake, tmp_path/'unpacked2')
+
+@pytest.mark.parametrize('per_sheet', [2, 4, 6, 9])
+@pytest.mark.parametrize('binding', [False, True])
+def test_extended_background_fills_entire_layout_sheet(tmp_path, per_sheet, binding):
+    from processor import _grid_shape
+    pictures = make_pictures(tmp_path, per_sheet)
+    opts = ExportOptions(paper='A5', orientation='Horizontal', dpi=100,
+                         photos_per_page=per_sheet, binding=binding,
+                         fit='Ampliar fondo (sin recortar)')
+    full, dims, _ = render_layout_page(pictures, opts)
+    try:
+        w, h = full.size
+        points = [(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1),
+                  (0, h // 2), (w - 1, h // 2), (w // 2, 0), (w // 2, h - 1)]
+        # Todas las bandas exteriores muestran fondo ampliado en lugar del
+        # blanco por defecto, también con margen de encuadernación.
+        for point in points:
+            assert full.getpixel(point) != (255, 255, 255)
+
+        cols, rows = _grid_shape(per_sheet, True)
+        assert cols > 1
+        if binding:
+            x0, y0, x1, y1 = printable_box((w, h), dims, binding=True)
+        else:
+            x0, y0, x1, y1 =  round(w * 3 / dims[0]), round(h * 3 / dims[1]), w - round(w * 3 / dims[0]), h - round(h * 3 / dims[1])
+        gap_x = max(1, round(w * 3 / dims[0]))
+        usable_w = (x1 - x0) - (cols - 1) * gap_x
+        gap_middle = x0 + usable_w // cols + gap_x // 2
+        # El hueco entre las dos primeras columnas también tiene fondo.
+        assert full.getpixel((gap_middle, (y0 + y1) // 2)) != (255, 255, 255)
+    finally:
+        full.close()
+
+
+def test_extended_layout_preview_and_export_cover_binding_edges(tmp_path):
+    import pypdfium2
+    pics = make_pictures(tmp_path, 2)
+    opts = ExportOptions(paper='A5', orientation='Horizontal', dpi=150,
+                         photos_per_page=2, binding=True,
+                         fit='Ampliar fondo (sin recortar)')
+    preview, _, _ = render_layout_page(pics, opts, preview_max_size=(750, 520))
+    final, _, _ = render_layout_page(pics, opts)
+    try:
+        assert preview.getpixel((0, preview.height // 2)) != (255, 255, 255)
+        assert final.getpixel((0, final.height // 2)) != (255, 255, 255)
+    finally:
+        preview.close()
+        final.close()
+    pdf_path, _ = export_pdf(pics, opts, tmp_path / 'fondos.pdf')
+    document = pypdfium2.PdfDocument(str(pdf_path))
+    try:
+        assert len(document) == 1
+        page = document[0]
+        try:
+            image = page.render(scale=150/72).to_pil()
+            assert image.getpixel((2, image.height // 2)) != (255, 255, 255)
+            image.close()
+        finally:
+            page.close()
+    finally:
+        document.close()
+    word, _ = export_word(pics, opts, tmp_path / 'fondos.docx')
+    from io import BytesIO
+    with ZipFile(word) as z:
+        media = [name for name in z.namelist() if name.startswith('word/media/')]
+        assert len(media) == 1
+        with Image.open(BytesIO(z.read(media[0]))) as word_sheet:
+            assert word_sheet.convert('RGB').getpixel((2, word_sheet.height // 2)) != (255, 255, 255)
+
+
+def test_non_extended_modes_keep_white_outer_margins(tmp_path):
+    pictures = make_pictures(tmp_path, 2)
+    opts = ExportOptions(paper='A5', orientation='Horizontal', dpi=100,
+                         photos_per_page=2, binding=True, fit='Ajustar (sin recortar)')
+    sheet, _, _ = render_layout_page(pictures, opts)
+    try:
+        assert sheet.getpixel((0, sheet.height // 2)) == (255, 255, 255)
+        assert sheet.getpixel((sheet.width - 1, sheet.height // 2)) == (255, 255, 255)
+    finally:
+        sheet.close()
+
+
+def test_extended_layout_blends_photo_edges_without_rectangular_patches():
+    """Regresión: el fondo de hoja debe fundirse con fotos sin corte a regla."""
+    from PIL import Image
+    from processor import _blend_unaltered_photo_into_background
+
+    background = Image.new("RGB", (260, 190), (210, 188, 160))
+    photo = Image.new("RGB", (200, 120), (33, 79, 110))
+    _blend_unaltered_photo_into_background(background, photo, (30, 35, 230, 155))
+
+    # Se ve el color del fondo justo en el contorno y se funde suavemente.
+    bg_color = (210, 188, 160)
+    photo_color = (33, 79, 110)
+    assert background.getpixel((30, 95)) == bg_color
+    assert background.getpixel((130, 95)) == photo_color  # centro nítido, sin cambios
+    for x in (31, 32, 33):
+        px = background.getpixel((x, 95))
+        assert all(min(a, b) < c < max(a, b)
+                   for a, b, c in zip(bg_color, photo_color, px))
+    assert background.getpixel((50, 95)) == photo_color
+    assert background.getpixel((130, 35)) == bg_color
+    assert background.getpixel((130, 55)) == photo_color
+    background.close()
+    photo.close()
