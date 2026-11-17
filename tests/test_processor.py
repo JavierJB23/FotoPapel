@@ -303,7 +303,7 @@ def test_pdf_import_does_not_add_second_frame(tmp_path):
         pdf.close()
 
 
-def test_existing_imported_pdf_preserves_white_margins_once(tmp_path):
+def test_existing_imported_pdf_can_be_reflowed_with_new_background(tmp_path):
     from PIL import ImageDraw
     from pdf_import import import_pdf_pages
 
@@ -321,9 +321,9 @@ def test_existing_imported_pdf_preserves_white_margins_once(tmp_path):
                          binding=True, fit='Ampliar fondo (sin recortar)',
                          pdf_page_paths=frozenset(imported))
     page, _, _ = render_print_image(imported[0], opts)
-    assert page.getpixel((0, page.height // 2)) == (255, 255, 255)  # el borde original
-    # Ninguna franja adicional: el primer píxel del dibujo sigue donde estaba.
-    with Image.open(imported[0]) as original:
-        original = original.convert('RGB').resize(page.size)
-        assert page.getpixel((100, page.height // 2)) == original.getpixel((100, page.height // 2))
+    # El viejo borde blanco del PDF desaparece y se rehace la maquetación.
+    assert page.getpixel((0, page.height // 2)) != (255, 255, 255)
+    # El contenido útil sigue visible en la zona central.
+    center = page.getpixel((page.width // 2, page.height // 2))
+    assert center[2] > center[0] and center[2] > center[1]
     page.close()
