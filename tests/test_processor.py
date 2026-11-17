@@ -327,3 +327,72 @@ def test_existing_imported_pdf_can_be_reflowed_with_new_background(tmp_path):
     center = page.getpixel((page.width // 2, page.height // 2))
     assert center[2] > center[0] and center[2] > center[1]
     page.close()
+
+
+def test_imported_pdf_with_only_top_and_bottom_bars_reapplies_new_fit(tmp_path):
+    """Regresión real: PDF antiguo Revelo con bandas horizontales, no 4 bordes."""
+    from pdf_import import import_pdf_pages
+    from processor import _trim_revelo_like_page_background
+
+    photo = tmp_path / "imagen_panorama.png"
+    Image.new("RGB", (1480, 922), (17, 41, 63)).save(photo)
+    old_pdf = tmp_path / "viejo_A4.pdf"
+    export_pdf([photo], ExportOptions(paper="A4", orientation="Horizontal",
+                                    fit="Ajustar (sin recortar)", dpi=150), old_pdf)
+    pages, _ = import_pdf_pages(old_pdf, tmp_path / "extraido", dpi=150)
+    with Image.open(pages[0]) as original:
+        extracted, found = _trim_revelo_like_page_background(original)
+        assert found
+        assert extracted.width >= original.width - 4
+        assert extracted.height < original.height * 0.94
+        extracted.close()
+    opts = ExportOptions(paper="A5", orientation="Horizontal", dpi=150,
+                         fit="Ampliar fondo (sin recortar)",
+                         pdf_page_paths=frozenset(pages))
+    rendered, _, _ = render_print_image(pages[0], opts, preview_max_size=(700, 600))
+    assert rendered.getpixel((rendered.width//2, 1)) != (255, 255, 255)
+    assert rendered.getpixel((rendered.width//2, rendered.height-2)) != (255, 255, 255)
+    assert rendered.getpixel((rendered.width//2, rendered.height//2))[2] > 45
+    rendered.close()
+
+
+def test_imported_pdf_with_only_left_and_right_bars_reapplies_new_fit(tmp_path):
+    """PDF antiguo con foto vertical y franjas solo en los laterales."""
+    from pdf_import import import_pdf_pages
+    from processor import _trim_revelo_like_page_background
+
+    picture = tmp_path / "vertical.png"
+    Image.new("RGB", (900, 1450), (28, 74, 107)).save(picture)
+    pdf = tmp_path / "antes.pdf"
+    export_pdf([picture], ExportOptions(paper="A4", orientation="Vertical",
+                                       fit="Ajustar (sin recortar)", dpi=150), pdf)
+    imported, _ = import_pdf_pages(pdf, tmp_path / "pdf_pages", dpi=150)
+    with Image.open(imported[0]) as before:
+        cleaned, found = _trim_revelo_like_page_background(before)
+        assert found
+        assert cleaned.width < before.width * .94
+        assert cleaned.height >= before.height - 4
+        cleaned.close()
+    changed, _, _ = render_print_image(imported[0], ExportOptions(
+        paper="A5", orientation="Vertical", dpi=150,
+        fit="Ampliar fondo (sin recortar)", pdf_page_paths=frozenset(imported)))
+    assert changed.getpixel((0, changed.height//2)) != (255, 255, 255)
+    assert changed.getpixel((changed.width-1, changed.height//2)) != (255, 255, 255)
+    changed.close()
+
+
+def test_text_document_white_margins_not_stripped(tmp_path):
+    """Un PDF de texto con margen blanco legítimo no debe autocortarse."""
+    from PIL import ImageDraw
+    from processor import _trim_revelo_like_page_background
+
+    page = Image.new("RGB", (900, 1200), "white")
+    draw = ImageDraw.Draw(page)
+    for y in range(150, 1040, 42):
+        for x in range(145, 730, 90):
+            draw.line((x, y, x+33, y), fill=(20, 24, 30), width=2)
+    isolated, found = _trim_revelo_like_page_background(page)
+    assert not found
+    assert isolated.size == page.size
+    isolated.close()
+    page.close()
