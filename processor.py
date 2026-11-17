@@ -410,6 +410,120 @@ def _grid_shape(count: int, landscape: bool) -> tuple[int, int]:
     return side, side
 
 
+def _extended_layout_background(
+    paths: Sequence[Path], opts: ExportOptions,
+    page_size: tuple[int, int], cell_rects: Sequence[tuple[int, int, int, int]],
+    cols: int, rows: int,
+) -> Image.Image:
+    """Fondo difuminado de hoja COMPLETA para composiciones de varias fotos.
+
+    El fondo utiliza una miniatura de cada imagen distribuyéndola por su zona
+    de la página; se difumina ANTES de colocar las imágenes nítidas. De este
+    modo también cubre los márgenes de encuadernación y los huecos entre fotos.
+    No borra, recorta ni deforma las fotografías originales del primer plano.
+    """
+    out_w, out_h = page_size
+    reduction = min(1.0, 1350 / max(out_w, out_h))
+    small_w = max(1, round(out_w * reduction))
+    small_h = max(1, round(out_h * reduction))
+    small = Image.new("RGB", (small_w, small_h), (40, 50, 55))
+    prepared: list[Image.Image] = []
+    try:
+        # La miniatura se calcula una sola vez por fuente, incluso cuando
+        # una cuadrícula incompleta requiere repetirla para cubrir el fondo.
+        for path in paths:
+            with Image.open(path) as raw:
+                original = _flatten_rgb(ImageOps.exif_transpose(raw))
+            try:
+                if path in opts.pdf_page_paths:
+                    prepared_image, _ = _trim_revelo_like_page_background(original)
+                else:
+                    prepared_image = original.copy()
+                prepared_image.thumbnail((1050, 1050), Image.Resampling.LANCZOS)
+                prepared.append(prepared_image)
+            finally:
+                original.close()
+
+        # Cada fotografía extiende sus propios colores hasta la mitad del
+        # hueco con la siguiente y hasta el borde exterior del papel.
+        boundaries_x = [0]
+        for col in range(1, cols):
+            previous_right = cell_rects[col - 1][2]
+            next_left = cell_rects[col][0]
+            boundaries_x.append((previous_right + next_left) // 2)
+        boundaries_x.append(out_w)
+        boundaries_y = [0]
+        for row in range(1, rows):
+            previous_bottom = cell_rects[(row - 1) * cols][3]
+            next_top = cell_rects[row * cols][1]
+            boundaries_y.append((previous_bottom + next_top) // 2)
+        boundaries_y.append(out_h)
+
+        def to_small(coord: int, dimension: int, small_dimension: int) -> int:
+            return round(coord * small_dimension / dimension)
+
+        for row in range(rows):
+            for col in range(cols):
+                slot = row * cols + col
+                source = prepared[min(slot, len(prepared) - 1)]
+                left = to_small(boundaries_x[col], out_w, small_w)
+                right = to_small(boundaries_x[col + 1], out_w, small_w)
+                top = to_small(boundaries_y[row], out_h, small_h)
+                bottom = to_small(boundaries_y[row + 1], out_h, small_h)
+                if right <= left or bottom <= top:
+                    continue
+                patch = ImageOps.fit(source, (right - left, bottom - top),
+                                     method=Image.Resampling.LANCZOS)
+                try:
+                    small.paste(patch, (left, top))
+                finally:
+                    patch.close()
+
+        # Un suavizado común elimina cortes duros en el fondo, sin alterar
+        # los contenidos nítidos que se colocarán encima más tarde.
+        blurred = small.filter(ImageFilter.GaussianBlur(max(8, round(max(small_w, small_h) * .03))))
+        if (small_w, small_h) == page_size:
+            return blurred
+        try:
+            return blurred.resize(page_size, Image.Resampling.BICUBIC)
+        finally:
+            blurred.close()
+    finally:
+        for prepared_image in prepared:
+            prepared_image.close()
+        small.close()
+
+
+def _blend_unaltered_photo_into_background(
+    backdrop: Image.Image, image: Image.Image, target: tuple[int, int, int, int],
+) -> None:
+    """Une la foto nítida con un fondo extendido sin un borde rectangular duro.
+
+    Solo difumina una franja exterior muy pequeña de la foto sobre el fondo.
+    La mayor parte de la imagen permanece sin modificación, incluidos los
+    textos y otros detalles importantes para imprimir.
+    """
+    left, top, right, bottom = target
+    width, height = right - left, bottom - top
+    if (width, height) != image.size:
+        raise ValueError("Dimensiones inconsistentes para el encaje")
+    # La transición no depende de los PPP: es un porcentaje de la fotografía.
+    feather = max(3, min(42, round(min(width, height) * 0.035)))
+    alpha = Image.new("L", (width, height), 255)
+    # Generar degradados de alfa independientes en los cuatro bordes.
+    # smoothstep evita cambios repentinos de pendiente visibles al imprimir.
+    values = [round(255 * (x / feather) ** 2 * (3 - 2 * (x / feather)))
+              for x in range(feather)]
+    draw = ImageDraw.Draw(alpha)
+    for i, opacity in enumerate(values):
+        draw.line((i, i, width-1-i, i), fill=opacity)
+        draw.line((i, height-1-i, width-1-i, height-1-i), fill=opacity)
+        draw.line((i, i, i, height-1-i), fill=opacity)
+        draw.line((width-1-i, i, width-1-i, height-1-i), fill=opacity)
+    backdrop.paste(image, (left, top), alpha)
+    alpha.close()
+
+
 def render_layout_page(
     paths: Sequence[Path], opts: ExportOptions, *,
     preview_max_size: tuple[int, int] | None = None, page_index: int = 0,
@@ -449,15 +563,26 @@ def render_layout_page(
     usable_h = y1 - y0 - (rows - 1) * gap_y
     if usable_w < cols or usable_h < rows:
         raise ValueError("El papel es demasiado pequeño para esta distribución")
-    sheet = Image.new("RGB", (out_w, out_h), "white")
-    lowres_any = False
-    for idx, path in enumerate(paths):
-        col, row = idx % cols, idx // cols
+    # Calculamos todas las celdas antes de dibujar: el fondo extendido puede
+    # ocupar la hoja entera, pero las fotos siguen limitadas a estas celdas.
+    cell_rects = []
+    for slot in range(cols * rows):
+        col, row = slot % cols, slot // cols
         cx0 = x0 + (col * usable_w // cols) + col * gap_x
         cx1 = x0 + ((col + 1) * usable_w // cols) + col * gap_x
         cy0 = y0 + (row * usable_h // rows) + row * gap_y
         cy1 = y0 + ((row + 1) * usable_h // rows) + row * gap_y
-        cw, ch = cx1-cx0, cy1-cy0
+        cell_rects.append((cx0, cy0, cx1, cy1))
+
+    if opts.fit == "Ampliar fondo (sin recortar)":
+        sheet = _extended_layout_background(paths, opts, (out_w, out_h),
+                                            cell_rects, cols, rows)
+    else:
+        sheet = Image.new("RGB", (out_w, out_h), "white")
+    lowres_any = False
+    for idx, path in enumerate(paths):
+        cx0, cy0, cx1, cy1 = cell_rects[idx]
+        cw, ch = cx1 - cx0, cy1 - cy0
         with Image.open(path) as raw:
             original = _flatten_rgb(ImageOps.exif_transpose(raw))
         try:
@@ -469,11 +594,26 @@ def render_layout_page(
                 factor = (max(cw / sw, ch / sh) if opts.fit == "Rellenar (recortar)"
                           else min(cw / sw, ch / sh))
                 lowres_any |= factor > 1.25
-                tile = _render_inside(content, (cw, ch), opts.fit)
-                try:
-                    sheet.paste(tile, (cx0, cy0))
-                finally:
-                    tile.close()
+                if opts.fit == "Ampliar fondo (sin recortar)":
+                    # La propia hoja ya tiene un fondo común; pegar una celda
+                    # con su fondo particular crea un rectángulo perfectamente
+                    # visible. Solo superponemos la foto nítida y fundimos sus
+                    # bordes en el fondo de la hoja.
+                    photo = ImageOps.contain(content, (cw, ch),
+                                              method=Image.Resampling.LANCZOS)
+                    try:
+                        left = cx0 + (cw - photo.width) // 2
+                        top = cy0 + (ch - photo.height) // 2
+                        _blend_unaltered_photo_into_background(
+                            sheet, photo, (left, top, left+photo.width, top+photo.height))
+                    finally:
+                        photo.close()
+                else:
+                    tile = _render_inside(content, (cw, ch), opts.fit)
+                    try:
+                        sheet.paste(tile, (cx0, cy0))
+                    finally:
+                        tile.close()
             finally:
                 if content is not original:
                     content.close()
