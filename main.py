@@ -72,7 +72,7 @@ class ScrollingArea(tk.Frame):
 class ReveloApp:
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("Revelo v1.2.2 · Fotos y PDF listos para imprimir")
+        self.root.title("Revelo v1.2.3 · Fotos y PDF listos para imprimir")
         self.root.geometry("1270x845")
         self.root.minsize(940, 650)
         self.root.configure(bg=BG)
@@ -168,7 +168,7 @@ class ReveloApp:
         htext = tk.Frame(left, bg=BG)
         htext.pack(side="left")
         self._label(htext, "Revelo", size=23, weight="bold").pack(anchor="w")
-        self._label(htext, "Tus fotos y documentos, listos para imprimir  ·  v1.2.2", color=MUTED, size=10).pack(anchor="w")
+        self._label(htext, "Tus fotos y documentos, listos para imprimir  ·  v1.2.3", color=MUTED, size=10).pack(anchor="w")
         self._label(header, "100 % LOCAL  ·  SIN SUBIR FOTOS A INTERNET", color=ACCENT, size=9,
                     weight="bold").pack(side="right")
 
@@ -769,8 +769,8 @@ class ReveloApp:
                 old.close()
             notice = " · Atención: elemento de poca resolución" if lowres else ""
             imported_pdf = path in self.pdf_origins
-            bind_note = (" · Página PDF original: sin nuevo encuadre" if imported_pdf else
-                         (" · Encuadernación: " + ("izquierda" if self.preview_index % 2 == 0 else "derecha")) if self.binding.get() == "Sí" else "")
+            bind_note = ((" · Página PDF importada" if imported_pdf else "") +
+                         ((" · Encuadernación: " + ("izquierda" if self.preview_index % 2 == 0 else "derecha")) if self.binding.get() == "Sí" else ""))
             self.preview_detail_text.set(
                 f"{self.paper.get()}  ·  {w_mm:g} × {h_mm:g} mm  ·  {self.fit.get()}"
                 f"  ·  Salida: {self.dpi.get()} PPP{bind_note}{notice}"

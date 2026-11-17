@@ -1,5 +1,27 @@
-REVELO v1.2 — FOTOS, PDF Y DOCUMENTOS LISTOS PARA IMPRIMIR
+REVELO v1.2.3 — FOTOS, PDF Y DOCUMENTOS LISTOS PARA IMPRIMIR
 ==========================================================
+
+ACTUALIZACIÓN v1.2.3 — FONDOS Y REIMPORTACIÓN DE PDF
+------------------------------------------------
+ - Con «Ampliar fondo (sin recortar)» y márgenes de encuadernación: el fondo
+   difuminado cubre toda la hoja, incluido el espacio reservado a la espiral.
+   La fotografía original permanece dentro del área segura de impresión.
+ - Las páginas importadas de PDF se reutilizan como páginas completas. No se
+   les añade otro fondo, recorte ni otro margen aunque los ajustes de impresión
+   estén activados para las fotos nuevas. Esto evita el "doble fondo".
+ - Los márgenes que YA estuvieran impresos dentro del PDF original se respetan:
+   no se eliminan automáticamente, para no recortar texto ni fotografías.
+ - Previsualización, exportación a PDF, Word e imágenes usan el mismo encaje.
+
+CÓMO ACTUALIZAR DESDE v1.2.2 (MUY SENCILLO)
+------------------------------------------
+ 1. En el ZIP de actualización encontrarás main.py, processor.py y la carpeta tests.
+ 2. En https://github.com/JavierJB23/FotoPapel/upload/main sube los dos archivos
+    principales y la carpeta tests (se actualizará tests/test_processor.py).
+ 3. Pulsa «Commit changes». El workflow existente generará Revelo.exe.
+ 4. En Actions, descarga el último artifact «Revelo-Windows-EXE» que termine
+    con una marca verde. No hace falta tocar .github ni volver a subir el icono.
+
 Aplicación gratuita para Windows, totalmente local: tus fotografías y PDF
 no se suben a Internet. No necesita registro ni suscripción.
 

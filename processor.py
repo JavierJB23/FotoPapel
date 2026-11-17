@@ -12,7 +12,7 @@ from typing import Callable, Sequence
 import math
 import re
 
-from PIL import Image, ImageOps, ImageFilter, ImageStat, ImageDraw, UnidentifiedImageError
+from PIL import Image, ImageOps, ImageFilter, ImageStat, ImageDraw, ImageChops, UnidentifiedImageError
 
 
 # Anchura x altura en milímetros (orientación vertical).
@@ -139,6 +139,76 @@ def _soft_edge_background(inside: Image.Image, size: tuple[int, int]) -> Image.I
     return result
 
 
+def _trim_revelo_like_page_background(source: Image.Image) -> tuple[Image.Image, bool]:
+    """Intenta aislar el contenido útil de una página PDF ya exportada.
+
+    Se usa al reimportar PDFs creados previamente por Revelo. Si la página
+    contiene un gran borde uniforme (normalmente blanco o gris muy claro),
+    lo recorta para poder volver a aplicar el encaje elegido en la sesión
+    actual. Si no detecta un marco suficientemente claro y uniforme, deja la
+    página intacta.
+    """
+    if source.width < 40 or source.height < 40:
+        return source.copy(), False
+
+    thumb = source.convert("RGB")
+    scale = min(1.0, 420 / max(thumb.width, thumb.height))
+    if scale < 1.0:
+        thumb = thumb.resize((max(1, round(thumb.width * scale)),
+                              max(1, round(thumb.height * scale))),
+                             Image.Resampling.BILINEAR)
+    try:
+        w, h = thumb.size
+        strip = max(4, min(w, h) // 40)
+        corners = [
+            thumb.crop((0, 0, strip, strip)),
+            thumb.crop((w - strip, 0, w, strip)),
+            thumb.crop((0, h - strip, strip, h)),
+            thumb.crop((w - strip, h - strip, w, h)),
+        ]
+        means = [ImageStat.Stat(part).mean[:3] for part in corners]
+        bg = tuple(round(sum(m[i] for m in means) / len(means)) for i in range(3))
+        border_parts = [
+            thumb.crop((0, 0, w, strip)),
+            thumb.crop((0, h - strip, w, h)),
+            thumb.crop((0, 0, strip, h)),
+            thumb.crop((w - strip, 0, w, h)),
+        ]
+        std = max(max(ImageStat.Stat(part).stddev[:3]) for part in border_parts)
+        brightness = sum(bg) / 3
+        if brightness < 205 or std > 16:
+            return source.copy(), False
+
+        solid = Image.new("RGB", thumb.size, bg)
+        diff = ImageChops.difference(thumb, solid)
+        mask = diff.convert("L").point(lambda value: 255 if value > 18 else 0)
+        bbox = mask.getbbox()
+        if not bbox:
+            return source.copy(), False
+        left, top, right, bottom = bbox
+        margin_left, margin_top = left, top
+        margin_right, margin_bottom = w - right, h - bottom
+        min_margin = max(8, round(min(w, h) * 0.035))
+        if min(margin_left, margin_top, margin_right, margin_bottom) < min_margin:
+            return source.copy(), False
+        # Evita recortes exagerados cuando el contenido útil ocupa muy poco.
+        if (right - left) < w * 0.45 or (bottom - top) < h * 0.45:
+            return source.copy(), False
+        scale_x = source.width / w
+        scale_y = source.height / h
+        crop = (
+            max(0, math.floor(left * scale_x)),
+            max(0, math.floor(top * scale_y)),
+            min(source.width, math.ceil(right * scale_x)),
+            min(source.height, math.ceil(bottom * scale_y)),
+        )
+        if crop[2] - crop[0] >= source.width - 4 and crop[3] - crop[1] >= source.height - 4:
+            return source.copy(), False
+        return source.crop(crop), True
+    finally:
+        thumb.close()
+
+
 def _extended_background(source: Image.Image, size: tuple[int, int]) -> Image.Image:
     """Fondo local difuminado para encajar sin recortes ni deformación.
 
@@ -221,8 +291,10 @@ def render_print_image(
     el fondo difuminado también se extiende detrás de ese margen, sin colocar
     texto ni la fotografía principal en la zona de la espiral.
 
-    Las páginas procedentes de PDF ya tienen composición y márgenes propios:
-    se escalan como páginas completas, sin recomponer ni recortar su contenido.
+    Las páginas procedentes de PDF pueden venir de una exportación anterior de
+    Revelo. Si detectamos un gran borde uniforme añadido en aquella exportación,
+    se recorta primero para volver a aplicar el modo de encaje actual. Si no
+    hay un borde claro y uniforme, se conserva la página entera.
     """
     opts.validate()
     w_mm, h_mm = dimensions_mm(path, opts)
@@ -242,37 +314,45 @@ def render_print_image(
     with Image.open(path) as raw:
         im = _flatten_rgb(ImageOps.exif_transpose(raw))
     try:
-        sw, sh = im.size
-        fill_factor = max(use_w / sw, use_h / sh)
-        contain_factor = min(use_w / sw, use_h / sh)
-        low_resolution = (fill_factor if opts.fit == "Rellenar (recortar)" else contain_factor) > 1.25
-        # La hoja importada de un PDF es una página terminada, no una foto:
-        # nunca se le añade otro margen ni un nuevo fondo, aunque haya
-        # encuadernación habilitada para las fotografías nuevas.
+        working = im
+        trimmed_pdf_border = False
         if path in opts.pdf_page_paths:
-            whole = ImageOps.contain(im, (out_w, out_h), method=Image.Resampling.LANCZOS)
-            if whole.size == (out_w, out_h):
-                return whole, (w_mm, h_mm), low_resolution
-            paper = Image.new("RGB", (out_w, out_h), "white")
-            paper.paste(whole, ((out_w - whole.width)//2, (out_h - whole.height)//2))
-            whole.close()
-            return paper, (w_mm, h_mm), low_resolution
+            working, trimmed_pdf_border = _trim_revelo_like_page_background(im)
+        try:
+            sw, sh = working.size
+            fill_factor = max(use_w / sw, use_h / sh)
+            contain_factor = min(use_w / sw, use_h / sh)
+            low_resolution = (fill_factor if opts.fit == "Rellenar (recortar)" else contain_factor) > 1.25
 
-        # El fondo puede ocupar el canal de encuadernación, porque lo importante
-        # es reservar ese espacio libre de contenido legible, no libre de tinta.
-        if opts.binding and opts.fit == "Ampliar fondo (sin recortar)":
-            full_bleed = _extended_background(im, (out_w, out_h))
-            inside = ImageOps.contain(im, (box[2] - box[0], box[3] - box[1]),
-                                      method=Image.Resampling.LANCZOS)
-            try:
-                x = box[0] + ((box[2] - box[0]) - inside.width) // 2
-                y = box[1] + ((box[3] - box[1]) - inside.height) // 2
-                full_bleed.paste(inside, (x, y))
-            finally:
-                inside.close()
-            return full_bleed, (w_mm, h_mm), low_resolution
+            # Si el PDF importado no parece tener un borde artificial grande,
+            # se conserva entero como página cerrada para no alterar su diseño.
+            if path in opts.pdf_page_paths and not trimmed_pdf_border:
+                whole = ImageOps.contain(working, (out_w, out_h), method=Image.Resampling.LANCZOS)
+                if whole.size == (out_w, out_h):
+                    return whole, (w_mm, h_mm), low_resolution
+                paper = Image.new("RGB", (out_w, out_h), "white")
+                paper.paste(whole, ((out_w - whole.width)//2, (out_h - whole.height)//2))
+                whole.close()
+                return paper, (w_mm, h_mm), low_resolution
 
-        result_inner = _render_inside(im, (box[2] - box[0], box[3] - box[1]), opts.fit)
+            # El fondo puede ocupar el canal de encuadernación, porque lo importante
+            # es reservar ese espacio libre de contenido legible, no libre de tinta.
+            if opts.binding and opts.fit == "Ampliar fondo (sin recortar)":
+                full_bleed = _extended_background(working, (out_w, out_h))
+                inside = ImageOps.contain(working, (box[2] - box[0], box[3] - box[1]),
+                                          method=Image.Resampling.LANCZOS)
+                try:
+                    x = box[0] + ((box[2] - box[0]) - inside.width) // 2
+                    y = box[1] + ((box[3] - box[1]) - inside.height) // 2
+                    full_bleed.paste(inside, (x, y))
+                finally:
+                    inside.close()
+                return full_bleed, (w_mm, h_mm), low_resolution
+
+            result_inner = _render_inside(working, (box[2] - box[0], box[3] - box[1]), opts.fit)
+        finally:
+            if working is not im:
+                working.close()
         if not opts.binding:
             return result_inner, (w_mm, h_mm), low_resolution
         try:
