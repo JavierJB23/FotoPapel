@@ -13,7 +13,7 @@ from pathlib import Path
 from PIL import Image, ImageTk, ImageOps, ImageDraw
 
 from processor import (
-    ExportOptions, PAPER_SIZES, SUPPORTED_EXTENSIONS, export,
+    ExportOptions, PAPER_SIZES, SUPPORTED_EXTENSIONS, FIT_MODES, export, render_print_image,
     pixel_size, source_dimensions,
 )
 
@@ -69,7 +69,7 @@ class ScrollingArea(tk.Frame):
 class FotoPapelApp:
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("FotoPapel · Fotos listas para imprimir")
+        self.root.title("FotoPapel v1.1 · Fotos listas para imprimir")
         self.root.geometry("1270x845")
         self.root.minsize(940, 650)
         self.root.configure(bg=BG)
@@ -87,6 +87,12 @@ class FotoPapelApp:
         self.output_path: Path | None = None
         self.updates: queue.Queue[tuple] = queue.Queue()
         self.library_cols = 3
+        self.preview_window: tk.Toplevel | None = None
+        self.preview_canvas: tk.Canvas | None = None
+        self.preview_image: Image.Image | None = None
+        self.preview_photo: ImageTk.PhotoImage | None = None
+        self.preview_index = 0
+        self.preview_resize_job: str | None = None
 
         self.paper = tk.StringVar(value="A4")
         self.orientation = tk.StringVar(value="Automática")
@@ -97,6 +103,9 @@ class FotoPapelApp:
         self.feedback = tk.StringVar(value="Carga tus fotos para empezar. Los archivos originales no se modifican.")
         self.count_var = tk.StringVar(value="0 fotos")
         self.page_count_var = tk.StringVar(value="0 páginas")
+        self.percent_text = tk.StringVar(value="(0 %)")
+        self.preview_page_text = tk.StringVar(value="")
+        self.preview_detail_text = tk.StringVar(value="")
 
         self._style()
         self._layout()
@@ -119,6 +128,11 @@ class FotoPapelApp:
         style.configure(
             "Custom.Vertical.TScrollbar", background=SURFACE_2,
             troughcolor=SURFACE, bordercolor=SURFACE, arrowcolor=MUTED,
+        )
+        style.configure(
+            "FotoPapel.Horizontal.TProgressbar", troughcolor=SURFACE_2,
+            background=ACCENT, darkcolor=ACCENT, lightcolor=ACCENT,
+            bordercolor=BORDER, thickness=15, relief="flat",
         )
 
     def _label(self, parent, text, *, size=10, color=TEXT, weight="normal", bg=None, **kw):
@@ -147,7 +161,7 @@ class FotoPapelApp:
         htext = tk.Frame(left, bg=BG)
         htext.pack(side="left")
         self._label(htext, "FotoPapel", size=23, weight="bold").pack(anchor="w")
-        self._label(htext, "Tus fotos, al tamaño exacto para imprimir", color=MUTED, size=10).pack(anchor="w")
+        self._label(htext, "Tus fotos, al tamaño exacto para imprimir  ·  v1.1", color=MUTED, size=10).pack(anchor="w")
         self._label(header, "100 % LOCAL  ·  SIN SUBIR FOTOS A INTERNET", color=ACCENT, size=9,
                     weight="bold").pack(side="right")
 
@@ -162,7 +176,7 @@ class FotoPapelApp:
         self._field(row, "ORIENTACIÓN", self.orientation,
                     ["Automática", "Vertical", "Horizontal"], width=16, grow=2)
         self._field(row, "ENCAJE EN EL PAPEL", self.fit,
-                    ["Ajustar (sin recortar)", "Rellenar (recortar)"], width=24, grow=3)
+                    list(FIT_MODES), width=32, grow=3)
         self._field(row, "CALIDAD", self.dpi, ["150", "300", "600"], width=8, grow=1)
         self._field(row, "EXPORTAR COMO", self.output_format,
                     ["PDF", "Word", "Imágenes (mismo formato)"], width=25, grow=3)
@@ -228,13 +242,20 @@ class FotoPapelApp:
         status_area.pack(side="left", fill="both", expand=True)
         self._label(status_area, "Listo", textvariable=self.feedback,
                     color=MUTED, size=10, anchor="w").pack(fill="x")
-        self.progress = ttk.Progressbar(status_area, mode="determinate", maximum=100)
-        self.progress.pack(fill="x", pady=(8, 0), padx=(0, 30))
+        progress_row = tk.Frame(status_area, bg=BG)
+        progress_row.pack(fill="x", pady=(8, 0), padx=(0, 22))
+        self.progress = ttk.Progressbar(progress_row, mode="determinate", maximum=100,
+                                         style="FotoPapel.Horizontal.TProgressbar")
+        self.progress.pack(side="left", fill="x", expand=True)
+        self._label(progress_row, "", textvariable=self.percent_text, color=ACCENT,
+                    weight="bold", size=10, width=7, anchor="e").pack(side="right", padx=(8, 0))
         self.open_btn = self._button(footer, "Abrir resultado", self.open_result, small=True)
         self.open_btn.pack(side="right", padx=(8, 0))
         self.open_btn.configure(state="disabled")
         self.export_btn = self._button(footer, "Exportar fotos   →", self.start_export, accent=True)
         self.export_btn.pack(side="right")
+        self.preview_btn = self._button(footer, "◉  Previsualización", self.open_preview)
+        self.preview_btn.pack(side="right", padx=(0, 8))
 
     def _field(self, row, caption, var, choices, *, width=18, grow=1):
         holder = tk.Frame(row, bg=SURFACE)
@@ -258,6 +279,8 @@ class FotoPapelApp:
             self.overview.set(f"{self.paper.get()} · {w:g} × {h:g} mm · {dw} × {dh} píxeles · {self.dpi.get()} PPP{suffix}")
         except Exception:
             pass
+        if self.preview_window is not None and self.preview_window.winfo_exists():
+            self._show_preview_page()
 
     def _thumbnail(self, path: Path) -> ImageTk.PhotoImage:
         if path not in self.thumbnails:
@@ -306,7 +329,7 @@ class FotoPapelApp:
         if new_count:
             self.render_library()
             self.render_order()
-            self.feedback.set(f"{len(self.paths)} foto(s) listas. Ordénalas si lo necesitas y pulsa Exportar fotos.")
+            self.feedback.set(f"{len(self.paths)} foto(s) listas. Puedes previsualizarlas antes de exportar.")
         if errors:
             messagebox.showwarning("Algunas fotos no se han añadido", "\n".join(errors[:10]))
 
@@ -322,6 +345,8 @@ class FotoPapelApp:
             self.selected = None
         self.render_library()
         self.render_order()
+        if not self.pages:
+            self._close_preview()
         self.feedback.set(f"Quitada de la lista: {path.name}. El archivo original se conserva.")
 
     def clear(self):
@@ -337,6 +362,7 @@ class FotoPapelApp:
             self.render_library()
             self.render_order()
             self.feedback.set("Lista vacía. Los originales no se han modificado.")
+            self._close_preview()
 
     def reset_order(self):
         if self.paths:
@@ -442,6 +468,8 @@ class FotoPapelApp:
             self.order_area.bind_wheel_recursive(slot)
         self.order_area._update_scrollregion()
         self.order_area.canvas.yview_moveto(offset)
+        if self.preview_window is not None and self.preview_window.winfo_exists():
+            self._show_preview_page()
 
     def _shift(self, index, delta):
         j = index + delta
@@ -537,6 +565,143 @@ class FotoPapelApp:
             fit=self.fit.get(), dpi=int(self.dpi.get()), fmt=fmt,
         )
 
+    def open_preview(self):
+        """Abre un visor de páginas con los mismos encajes de la exportación."""
+        if not self.pages:
+            messagebox.showinfo("Faltan fotos", "Añade al menos una foto para previsualizar.")
+            return
+        if self.preview_window is not None and self.preview_window.winfo_exists():
+            self.preview_window.lift()
+            self.preview_window.focus_set()
+            self._show_preview_page()
+            return
+        window = tk.Toplevel(self.root)
+        window.title("FotoPapel · Previsualización de impresión")
+        window.geometry("990x770")
+        window.minsize(520, 480)
+        window.configure(bg=BG)
+        try:
+            ico = app_asset("icono.ico")
+            if sys.platform == "win32" and ico.exists():
+                window.iconbitmap(str(ico))
+        except tk.TclError:
+            pass
+        self.preview_window = window
+        self.preview_index = self.pages.index(self.selected) if self.selected in self.pages else 0
+        top = tk.Frame(window, bg=BG, padx=22, pady=15)
+        top.pack(fill="x")
+        self._label(top, "VISTA PREVIA DE IMPRESIÓN", size=15,
+                    weight="bold").pack(anchor="w")
+        self._label(top, "Comprueba el encaje real. No se exportará nada hasta que pulses Exportar fotos.",
+                    color=MUTED, size=10).pack(anchor="w", pady=(5, 0))
+
+        canvas_shell = tk.Frame(window, bg=SURFACE, padx=10, pady=10,
+                                highlightbackground=BORDER, highlightthickness=1)
+        canvas_shell.pack(fill="both", expand=True, padx=22, pady=(0, 12))
+        self.preview_canvas = tk.Canvas(canvas_shell, bg=SURFACE, borderwidth=0,
+                                        highlightthickness=0)
+        self.preview_canvas.pack(fill="both", expand=True)
+        self.preview_canvas.bind("<Configure>", self._preview_resized)
+
+        controls = tk.Frame(window, bg=BG, padx=22, pady=5)
+        controls.pack(fill="x")
+        self.preview_prev_btn = self._button(controls, "← Anterior", lambda: self._preview_move(-1), small=True)
+        self.preview_prev_btn.pack(side="left")
+        self.preview_next_btn = self._button(controls, "Siguiente →", lambda: self._preview_move(1), small=True)
+        self.preview_next_btn.pack(side="right")
+        self._label(controls, "", textvariable=self.preview_page_text, size=11,
+                    weight="bold").pack(fill="x", pady=(7, 0))
+        self._label(window, "", textvariable=self.preview_detail_text, color=MUTED,
+                    size=10).pack(padx=22, pady=(4, 16))
+        window.bind("<Left>", lambda _event: self._preview_move(-1))
+        window.bind("<Right>", lambda _event: self._preview_move(1))
+        window.protocol("WM_DELETE_WINDOW", self._close_preview)
+        self._show_preview_page()
+
+    def _close_preview(self):
+        if self.preview_resize_job is not None:
+            self.root.after_cancel(self.preview_resize_job)
+            self.preview_resize_job = None
+        if self.preview_image is not None:
+            self.preview_image.close()
+            self.preview_image = None
+        self.preview_photo = None
+        if self.preview_window is not None and self.preview_window.winfo_exists():
+            self.preview_window.destroy()
+        self.preview_window = None
+        self.preview_canvas = None
+
+    def _preview_move(self, step: int):
+        if not self.pages:
+            self._close_preview()
+            return
+        new_index = max(0, min(len(self.pages) - 1, self.preview_index + step))
+        if new_index != self.preview_index:
+            self.preview_index = new_index
+            self._show_preview_page()
+
+    def _show_preview_page(self):
+        if self.preview_window is None or not self.preview_window.winfo_exists():
+            return
+        if not self.pages:
+            self._close_preview()
+            return
+        self.preview_index = min(self.preview_index, len(self.pages) - 1)
+        path = self.pages[self.preview_index]
+        self.preview_page_text.set(f"Página {self.preview_index + 1} de {len(self.pages)}  ·  {path.name}")
+        self.preview_prev_btn.configure(state="normal" if self.preview_index > 0 else "disabled")
+        self.preview_next_btn.configure(state="normal" if self.preview_index < len(self.pages) - 1 else "disabled")
+        try:
+            rendered, (w_mm, h_mm), lowres = render_print_image(
+                path, self._options(), preview_max_size=(1100, 850)
+            )
+            old = self.preview_image
+            self.preview_image = rendered
+            if old is not None:
+                old.close()
+            notice = " · Atención: foto original de poca resolución" if lowres else ""
+            self.preview_detail_text.set(
+                f"{self.paper.get()}  ·  {w_mm:g} × {h_mm:g} mm  ·  {self.fit.get()}"
+                f"  ·  Salida: {self.dpi.get()} PPP{notice}"
+            )
+            self._paint_preview()
+        except Exception as exc:
+            self.preview_detail_text.set("No se pudo abrir esta imagen")
+            if self.preview_canvas is not None:
+                self.preview_canvas.delete("all")
+                self.preview_canvas.create_text(240, 160, text=str(exc), fill=WARNING, width=400)
+
+    def _preview_resized(self, _event=None):
+        if self.preview_resize_job is not None:
+            self.root.after_cancel(self.preview_resize_job)
+        self.preview_resize_job = self.root.after(110, self._paint_preview)
+
+    def _paint_preview(self):
+        self.preview_resize_job = None
+        canvas, picture = self.preview_canvas, self.preview_image
+        if canvas is None or picture is None or not canvas.winfo_exists():
+            return
+        width, height = canvas.winfo_width(), canvas.winfo_height()
+        if width < 50 or height < 50:
+            return
+        room_w, room_h = max(1, width - 56), max(1, height - 54)
+        scale = min(room_w / picture.width, room_h / picture.height)
+        draw_w, draw_h = max(1, round(picture.width * scale)), max(1, round(picture.height * scale))
+        if (draw_w, draw_h) != picture.size:
+            display = picture.resize((draw_w, draw_h), Image.Resampling.LANCZOS)
+        else:
+            display = picture
+        self.preview_photo = ImageTk.PhotoImage(display)
+        if display is not picture:
+            display.close()
+        x, y = (width - draw_w) // 2, (height - draw_h) // 2
+        canvas.delete("all")
+        canvas.create_rectangle(x + 7, y + 8, x + draw_w + 7, y + draw_h + 8,
+                                fill=BG, outline="")
+        canvas.create_rectangle(x - 2, y - 2, x + draw_w + 2, y + draw_h + 2,
+                                outline=ACCENT, width=2)
+        canvas.create_image(x, y, image=self.preview_photo, anchor="nw")
+
     def start_export(self):
         if self.is_busy:
             return
@@ -562,7 +727,9 @@ class FotoPapelApp:
                 return
         self.is_busy = True
         self.export_btn.configure(state="disabled", text="Exportando…")
+        self.preview_btn.configure(state="disabled")
         self.progress["value"] = 0
+        self.percent_text.set("(0 %)")
         self.feedback.set("Preparando las fotografías…")
         pages = self.pages.copy()
 
@@ -583,13 +750,17 @@ class FotoPapelApp:
                 event = self.updates.get_nowait()
                 if event[0] == "progress":
                     _, current, total, name = event
-                    self.progress["value"] = round(100 * current / total)
-                    self.feedback.set(f"Procesando {current}/{total}: {name}")
+                    percent = round(100 * current / total)
+                    self.progress["value"] = percent
+                    self.percent_text.set(f"({percent} %)")
+                    self.feedback.set(f"Procesando {current}/{total}: {name}  ({percent} %)")
                 elif event[0] == "success":
                     _, result, warning_count, count = event
                     self.is_busy = False
                     self.export_btn.configure(state="normal", text="Exportar fotos   →")
+                    self.preview_btn.configure(state="normal")
                     self.progress["value"] = 100
+                    self.percent_text.set("(100 %)")
                     self.output_path = Path(result)
                     self.open_btn.configure(state="normal")
                     self.feedback.set(f"✓ {count} foto(s) exportadas. Resultado: {self.output_path.name}")
@@ -600,7 +771,9 @@ class FotoPapelApp:
                 elif event[0] == "error":
                     self.is_busy = False
                     self.export_btn.configure(state="normal", text="Exportar fotos   →")
+                    self.preview_btn.configure(state="normal")
                     self.progress["value"] = 0
+                    self.percent_text.set("(0 %)")
                     self.feedback.set("No se pudo completar la exportación.")
                     messagebox.showerror("Error al exportar", event[1])
         except queue.Empty:

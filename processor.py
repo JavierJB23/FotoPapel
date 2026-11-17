@@ -12,7 +12,7 @@ from typing import Callable, Sequence
 import math
 import re
 
-from PIL import Image, ImageOps, UnidentifiedImageError
+from PIL import Image, ImageOps, ImageFilter, ImageStat, ImageDraw, UnidentifiedImageError
 
 
 # Anchura x altura en milímetros (orientación vertical).
@@ -35,13 +35,20 @@ PAPER_SIZES: dict[str, tuple[float, float]] = {
 
 SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
 Progress = Callable[[int, int, str], None]
+FIT_MODES = (
+    "Ajustar (sin recortar)",
+    "Rellenar (recortar)",
+    "Ajuste inteligente (máx. 5 %)",
+    "Ampliar fondo (sin recortar)",
+)
+
 
 
 @dataclass(frozen=True)
 class ExportOptions:
     paper: str = "A4"
     orientation: str = "Automática"  # Automática / Vertical / Horizontal
-    fit: str = "Ajustar (sin recortar)"  # Ajustar... / Rellenar (recortar)
+    fit: str = "Ajustar (sin recortar)"  # Mantener proporción, recortar, suave, fondo extendido
     dpi: int = 300
     fmt: str = "PDF"  # Imagenes / PDF / Word
 
@@ -50,7 +57,7 @@ class ExportOptions:
             raise ValueError("Tamaño de papel no reconocido")
         if self.orientation not in ("Automática", "Vertical", "Horizontal"):
             raise ValueError("Orientación no reconocida")
-        if self.fit not in ("Ajustar (sin recortar)", "Rellenar (recortar)"):
+        if self.fit not in FIT_MODES:
             raise ValueError("Modo de encaje no reconocido")
         if not (72 <= self.dpi <= 600):
             raise ValueError("Los PPP deben estar entre 72 y 600")
@@ -98,27 +105,107 @@ def _flatten_rgb(im: Image.Image) -> Image.Image:
     return im.convert("RGB")
 
 
-def render_print_image(path: Path, opts: ExportOptions) -> tuple[Image.Image, tuple[float, float], bool]:
-    """Devuelve imagen RGB de píxeles exactos, medidas mm y aviso de reescalado."""
+def _soft_edge_background(inside: Image.Image, size: tuple[int, int]) -> Image.Image:
+    """Extiende los colores de los bordes en las bandas sobrantes.
+
+    El original se superpone encima y nunca se modifica. Mantiene los colores
+    de las franjas parecidos a los de la fotografía, sin bordes blancos.
+    """
+    out_w, out_h = size
+    in_w, in_h = inside.size
+    x = (out_w - in_w) // 2
+    y = (out_h - in_h) // 2
+    t = max(1, min(in_w, in_h) // 150)
+
+    def average_color(box: tuple[int, int, int, int]) -> tuple[int, int, int]:
+        return tuple(round(v) for v in ImageStat.Stat(inside.crop(box)).mean[:3])
+
+    top = average_color((0, 0, in_w, t))
+    bottom = average_color((0, in_h - t, in_w, in_h))
+    left = average_color((0, 0, t, in_h))
+    right = average_color((in_w - t, 0, in_w, in_h))
+    result = Image.new("RGB", size, top)
+    drawing = ImageDraw.Draw(result)
+    if y > 0:
+        drawing.rectangle((0, y + in_h, out_w, out_h), fill=bottom)
+    if x > 0:
+        drawing.rectangle((0, 0, x, out_h), fill=left)
+        drawing.rectangle((x + in_w, 0, out_w, out_h), fill=right)
+    return result
+
+
+def _extended_background(source: Image.Image, size: tuple[int, int]) -> Image.Image:
+    """Fondo local difuminado para encajar sin recortes ni deformación.
+
+    La base es una ampliación desenfocada de la propia foto; el centro se
+    recubre con su versión íntegra y proporcionada. No es IA generativa.
+    Se prepara una base reducida para no gastar cientos de MB a 600 PPP.
+    """
+    out_w, out_h = size
+    ratio = min(1.0, 1350 / max(out_w, out_h))
+    work = (max(1, round(out_w * ratio)), max(1, round(out_h * ratio)))
+    backdrop = ImageOps.fit(source, work, method=Image.Resampling.LANCZOS)
+    radius = max(8, round(max(work) * 0.025))
+    blurred = backdrop.filter(ImageFilter.GaussianBlur(radius))
+    backdrop.close()
+    if work != size:
+        result = blurred.resize(size, Image.Resampling.BICUBIC)
+        blurred.close()
+        return result
+    return blurred
+
+
+def render_print_image(
+    path: Path, opts: ExportOptions, *, preview_max_size: tuple[int, int] | None = None
+) -> tuple[Image.Image, tuple[float, float], bool]:
+    """Prepara la imagen para imprimir, o una previsualización del mismo encaje.
+
+    Para la previsualización limita el número de píxeles, pero conserva las
+    proporciones físicas de la hoja y el mismo algoritmo de composición.
+    """
     opts.validate()
     w_mm, h_mm = dimensions_mm(path, opts)
     out_w, out_h = pixel_size(w_mm, h_mm, opts.dpi)
+    full_w, full_h = out_w, out_h
+    if preview_max_size is not None:
+        max_w, max_h = preview_max_size
+        if max_w <= 0 or max_h <= 0:
+            raise ValueError("Las dimensiones de previsualización deben ser positivas")
+        scale = min(1.0, max_w / out_w, max_h / out_h)
+        out_w, out_h = max(1, round(out_w * scale)), max(1, round(out_h * scale))
     with Image.open(path) as raw:
         im = _flatten_rgb(ImageOps.exif_transpose(raw))
-    sw, sh = im.size
-    if opts.fit == "Rellenar (recortar)":
-        factor = max(out_w / sw, out_h / sh)
-        low_resolution = factor > 1.25
-        result = ImageOps.fit(im, (out_w, out_h), method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
-    else:
-        factor = min(out_w / sw, out_h / sh)
-        low_resolution = factor > 1.25
-        inside = ImageOps.contain(im, (out_w, out_h), method=Image.Resampling.LANCZOS)
-        result = Image.new("RGB", (out_w, out_h), "white")
-        result.paste(inside, ((out_w - inside.width) // 2, (out_h - inside.height) // 2))
-    im.close()
+    try:
+        sw, sh = im.size
+        # La advertencia depende de la resolución REAL de exportación, incluso
+        # cuando se está mostrando una previsualización de menor resolución.
+        fill_factor = max(full_w / sw, full_h / sh)
+        contain_factor = min(full_w / sw, full_h / sh)
+        low_resolution = (fill_factor if opts.fit == "Rellenar (recortar)" else contain_factor) > 1.25
+        if opts.fit == "Rellenar (recortar)":
+            result = ImageOps.fit(im, (out_w, out_h), method=Image.Resampling.LANCZOS,
+                                  centering=(0.5, 0.5))
+        else:
+            inside = ImageOps.contain(im, (out_w, out_h), method=Image.Resampling.LANCZOS)
+            if opts.fit == "Ajuste inteligente (máx. 5 %)":
+                # Máximo un 5 % de estiramiento de la dimensión que sobra;
+                # nunca recorta ni cambia las proporciones de la otra.
+                new_w = min(out_w, max(1, round(inside.width * 1.05)))
+                new_h = min(out_h, max(1, round(inside.height * 1.05)))
+                if (new_w, new_h) != inside.size:
+                    resized = inside.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                    inside.close()
+                    inside = resized
+                result = _soft_edge_background(inside, (out_w, out_h))
+            elif opts.fit == "Ampliar fondo (sin recortar)":
+                result = _extended_background(im, (out_w, out_h))
+            else:
+                result = Image.new("RGB", (out_w, out_h), "white")
+            result.paste(inside, ((out_w - inside.width) // 2, (out_h - inside.height) // 2))
+            inside.close()
+    finally:
+        im.close()
     return result, (w_mm, h_mm), low_resolution
-
 
 def _safe_basename(text: str) -> str:
     return re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", text).strip(" .") or "foto"

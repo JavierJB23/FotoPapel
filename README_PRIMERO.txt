@@ -1,6 +1,34 @@
-FOTOPAPEL — CONVERSOR Y ORGANIZADOR DE FOTOS PARA IMPRIMIR
+FOTOPAPEL v1.1 — CONVERSOR Y ORGANIZADOR DE FOTOS PARA IMPRIMIR
 ==========================================================
 Programa gratuito para Windows, sin publicidad, sin registro y sin subir fotos a internet.
+
+
+NOVEDADES v1.1
+--------------
+ - Ajuste inteligente (max. 5 %): conserva toda la imagen y permite un
+   estiramiento limitado para reducir las bandas; el espacio que quede
+   se rellena con colores extraidos de los bordes (no blanco).
+ - Ampliar fondo (sin recortar): conserva toda la imagen sin deformarla
+   y rellena las bandas con un fondo difuminado derivado de la foto.
+   No utiliza IA generativa ni inventa detalles nuevos.
+ - Boton Previsualización junto a Exportar fotos: enseña la pagina antes
+   de exportar, con flechas para navegar las fotos en el orden elegido.
+   Los cambios de encaje o tamaño se reflejan en la previsualización.
+ - Barra de avance aguamarina y porcentaje de progreso entre parentesis.
+ - 300 PPP como calidad inicial recomendada.
+
+PARA ACTUALIZAR UN REPOSITORIO QUE YA TIENE FOTOPAPEL v1.0
+---------------------------------------------------------
+ 1. Abre el repositorio FotoPapel en GitHub.
+ 2. Pulsa 'Add file' > 'Upload files'.
+ 3. Sube main.py, processor.py y README_PRIMERO.txt DE LA VERSION v1.1.
+    Confirma la sustitución de los archivos existentes si se solicita.
+ 4. Pulsa 'Commit changes'.
+ 5. En 'Actions' se generara automaticamente un NUEVO FotoPapel.exe.
+    Abre el trabajo reciente con el icono verde y descarga su artifact.
+ 6. Descomprime el ZIP de GitHub, cierra el programa antiguo y abre
+    FotoPapel.exe nuevo. No hay que instalar nada.
+ No hace falta volver a subir la carpeta .github, ni el icono.
 
 PARA CONSEGUIR EL .EXE (EL METODO RECOMENDADO, SIN INSTALAR NADA)
 ----------------------------------------------------------------
@@ -47,12 +75,19 @@ COMO SE USA
       se deja blanco.
       Rellenar (recortar): cubre el papel completamente, sin deformar,
       cortando bordes si las proporciones no coinciden.
+      Ajuste inteligente (max. 5 %): recorta 0 %, estira un poco como
+      maximo y rellena pequeñas bandas con los colores de la imagen.
+      Ampliar fondo (sin recortar): conserva foto sin deformar y rellena
+      el resto con fondo artificial desenfocado a partir de la imagen.
  5. Elige resolución: 150, 300 o 600 PPP. Se recomienda 300 PPP.
  6. Elige PDF (un único PDF), Word (un DOCX) o Imágenes (mismo formato).
  7. Para cambiar el orden, ARRASTRA una foto de la izquierda hasta una
     posición numerada a la derecha. También puedes usar las flechas ↑ ↓.
     El orden inicial es el de la carga. 'Orden inicial' lo restaura.
- 8. Pulsa 'Exportar fotos' y elige dónde guardar el resultado.
+ 8. Pulsa 'Previsualización' para revisar las paginas una a una antes
+    de exportarlas (flechas para moverte entre páginas).
+ 9. Pulsa 'Exportar fotos' y elige dónde guardar el resultado.
+    Veras la barra verde aguamarina y el avance (0 %)-(100 %).
 
 DETALLES DE IMPRESION
 ---------------------
