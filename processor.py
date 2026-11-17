@@ -52,6 +52,8 @@ class ExportOptions:
     dpi: int = 300
     fmt: str = "PDF"  # Imagenes / PDF / Word
     binding: bool = False  # Reserva canal interior para encuadernación
+    # Una página de PDF importada ya está maquetada. No añadirle un segundo encaje.
+    pdf_page_paths: frozenset[Path] = frozenset()
 
     def validate(self) -> None:
         if self.paper not in PAPER_SIZES:
@@ -215,7 +217,12 @@ def render_print_image(
 ) -> tuple[Image.Image, tuple[float, float], bool]:
     """Prepara la imagen final o una previsualización de idéntico encaje.
 
-    El canal de encuadernación queda siempre blanco, incluso en modo rellenar.
+    El margen de encuadernación protege el contenido. En modo «Ampliar fondo»,
+    el fondo difuminado también se extiende detrás de ese margen, sin colocar
+    texto ni la fotografía principal en la zona de la espiral.
+
+    Las páginas procedentes de PDF ya tienen composición y márgenes propios:
+    se escalan como páginas completas, sin recomponer ni recortar su contenido.
     """
     opts.validate()
     w_mm, h_mm = dimensions_mm(path, opts)
@@ -239,6 +246,32 @@ def render_print_image(
         fill_factor = max(use_w / sw, use_h / sh)
         contain_factor = min(use_w / sw, use_h / sh)
         low_resolution = (fill_factor if opts.fit == "Rellenar (recortar)" else contain_factor) > 1.25
+        # La hoja importada de un PDF es una página terminada, no una foto:
+        # nunca se le añade otro margen ni un nuevo fondo, aunque haya
+        # encuadernación habilitada para las fotografías nuevas.
+        if path in opts.pdf_page_paths:
+            whole = ImageOps.contain(im, (out_w, out_h), method=Image.Resampling.LANCZOS)
+            if whole.size == (out_w, out_h):
+                return whole, (w_mm, h_mm), low_resolution
+            paper = Image.new("RGB", (out_w, out_h), "white")
+            paper.paste(whole, ((out_w - whole.width)//2, (out_h - whole.height)//2))
+            whole.close()
+            return paper, (w_mm, h_mm), low_resolution
+
+        # El fondo puede ocupar el canal de encuadernación, porque lo importante
+        # es reservar ese espacio libre de contenido legible, no libre de tinta.
+        if opts.binding and opts.fit == "Ampliar fondo (sin recortar)":
+            full_bleed = _extended_background(im, (out_w, out_h))
+            inside = ImageOps.contain(im, (box[2] - box[0], box[3] - box[1]),
+                                      method=Image.Resampling.LANCZOS)
+            try:
+                x = box[0] + ((box[2] - box[0]) - inside.width) // 2
+                y = box[1] + ((box[3] - box[1]) - inside.height) // 2
+                full_bleed.paste(inside, (x, y))
+            finally:
+                inside.close()
+            return full_bleed, (w_mm, h_mm), low_resolution
+
         result_inner = _render_inside(im, (box[2] - box[0], box[3] - box[1]), opts.fit)
         if not opts.binding:
             return result_inner, (w_mm, h_mm), low_resolution
