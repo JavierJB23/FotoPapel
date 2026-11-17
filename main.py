@@ -72,7 +72,7 @@ class ScrollingArea(tk.Frame):
 class ReveloApp:
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("Revelo v1.2 · Fotos y PDF listos para imprimir")
+        self.root.title("Revelo v1.2.1 · Fotos y PDF listos para imprimir")
         self.root.geometry("1270x845")
         self.root.minsize(940, 650)
         self.root.configure(bg=BG)
@@ -168,7 +168,7 @@ class ReveloApp:
         htext = tk.Frame(left, bg=BG)
         htext.pack(side="left")
         self._label(htext, "Revelo", size=23, weight="bold").pack(anchor="w")
-        self._label(htext, "Tus fotos y documentos, listos para imprimir  ·  v1.2", color=MUTED, size=10).pack(anchor="w")
+        self._label(htext, "Tus fotos y documentos, listos para imprimir  ·  v1.2.1", color=MUTED, size=10).pack(anchor="w")
         self._label(header, "100 % LOCAL  ·  SIN SUBIR FOTOS A INTERNET", color=ACCENT, size=9,
                     weight="bold").pack(side="right")
 
@@ -177,27 +177,23 @@ class ReveloApp:
         settings = tk.Frame(setting_outer, bg=SURFACE, padx=17, pady=14,
                             highlightbackground=BORDER, highlightthickness=1)
         settings.pack(fill="x")
+        # Una sola línea, con anchuras proporcionadas al contenido.
+        # grid evita que los cinco primeros controles absorban todo el ancho
+        # dejando el selector de encuadernación en una segunda fila.
         row = tk.Frame(settings, bg=SURFACE)
         row.pack(fill="x")
-        self._field(row, "TAMAÑO DE IMPRESIÓN", self.paper, list(PAPER_SIZES), width=17, grow=2)
-        self._field(row, "ORIENTACIÓN", self.orientation,
-                    ["Automática", "Vertical", "Horizontal"], width=16, grow=2)
-        self._field(row, "ENCAJE EN EL PAPEL", self.fit,
-                    list(FIT_MODES), width=32, grow=3)
-        self._field(row, "CALIDAD", self.dpi, ["150", "300", "600"], width=8, grow=1)
-        self._field(row, "EXPORTAR COMO", self.output_format,
-                    ["PDF", "Word", "Imágenes (mismo formato)"], width=25, grow=3)
-        margins_row = tk.Frame(settings, bg=SURFACE)
-        margins_row.pack(fill="x", pady=(12, 0))
-        margin_holder = tk.Frame(margins_row, bg=SURFACE)
-        margin_holder.pack(side="left")
-        self._label(margin_holder, "MÁRGENES DE ENCUADERNACIÓN", color=MUTED,
-                    size=8, weight="bold").pack(anchor="w", pady=(0, 5))
-        ttk.Combobox(margin_holder, values=["No", "Sí"], textvariable=self.binding,
-                     width=9, state="readonly", style="Custom.TCombobox").pack(anchor="w")
-        self._label(margins_row,
-                    "Sí: deja 12 mm para la espiral y 3 mm de seguridad. Izquierda en impares, derecha en pares.",
-                    size=9, color=MUTED, wraplength=830, justify="left").pack(side="left", padx=(18, 0), pady=(12, 0))
+        fields = [
+            ("TAMAÑO DE IMPRESIÓN", self.paper, list(PAPER_SIZES), 112, 3),
+            ("ORIENTACIÓN", self.orientation, ["Automática", "Vertical", "Horizontal"], 100, 2),
+            ("ENCAJE EN EL PAPEL", self.fit, list(FIT_MODES), 180, 5),
+            ("CALIDAD", self.dpi, ["150", "300", "600"], 72, 1),
+            ("EXPORTAR COMO", self.output_format, ["PDF", "Word", "Imágenes (mismo formato)"], 140, 3),
+            ("MÁRGENES DE ENCUADERNACIÓN", self.binding, ["No", "Sí"], 204, 3),
+        ]
+        for column, (caption, variable, choices, minwidth, weight) in enumerate(fields):
+            row.grid_columnconfigure(column, weight=weight, minsize=minwidth)
+            self._field(row, caption, variable, choices, column=column,
+                        compact=(column == 5), last=(column == 5))
         info = tk.Frame(settings, bg=SURFACE)
         info.pack(fill="x", pady=(12, 0))
         self._label(info, "●", color=ACCENT, size=10).pack(side="left")
@@ -207,7 +203,32 @@ class ReveloApp:
         for var in (self.paper, self.orientation, self.dpi, self.fit, self.output_format, self.binding):
             var.trace_add("write", self._update_overview)
 
-        content = tk.Frame(self.root, bg=BG, padx=24, pady=16)
+        # Reservar el pie ANTES de distribuir el espacio restante a los paneles;
+        # así los botones nunca quedan debajo de la barra de tareas de Windows.
+        footer = tk.Frame(self.root, bg=BG, padx=25, pady=10)
+        footer.pack(side="bottom", fill="x")
+        self.open_btn = self._button(footer, "Abrir resultado", self.open_result, small=True)
+        self.open_btn.pack(side="right", padx=(8, 0))
+        self.open_btn.configure(state="disabled")
+        self.export_btn = self._button(footer, "Exportar fotos   →", self.start_export, accent=True)
+        self.export_btn.pack(side="right")
+        self.preview_btn = self._button(footer, "◉  Previsualización", self.open_preview)
+        self.preview_btn.pack(side="right", padx=(0, 8))
+
+
+        status_area = tk.Frame(footer, bg=BG)
+        status_area.pack(side="left", fill="both", expand=True)
+        self._label(status_area, "Listo", textvariable=self.feedback,
+                    color=MUTED, size=10, anchor="w").pack(fill="x")
+        progress_row = tk.Frame(status_area, bg=BG)
+        progress_row.pack(fill="x", pady=(8, 0), padx=(0, 22))
+        self.progress = ttk.Progressbar(progress_row, mode="determinate", maximum=100,
+                                         style="Revelo.Horizontal.TProgressbar")
+        self.progress.pack(side="left", fill="x", expand=True)
+        self._label(progress_row, "", textvariable=self.percent_text, color=ACCENT,
+                    weight="bold", size=10, width=7, anchor="e").pack(side="right", padx=(8, 0))
+
+        content = tk.Frame(self.root, bg=BG, padx=24, pady=10)
         content.pack(fill="both", expand=True)
         content.grid_rowconfigure(0, weight=1)
         content.grid_columnconfigure(0, weight=6, uniform="grid")
@@ -257,34 +278,17 @@ class ReveloApp:
         self.order_area.pack(fill="both", expand=True, padx=9, pady=9)
         self._show_empty_order()
 
-        footer = tk.Frame(self.root, bg=BG, padx=25, pady=14)
-        footer.pack(fill="x")
-        status_area = tk.Frame(footer, bg=BG)
-        status_area.pack(side="left", fill="both", expand=True)
-        self._label(status_area, "Listo", textvariable=self.feedback,
-                    color=MUTED, size=10, anchor="w").pack(fill="x")
-        progress_row = tk.Frame(status_area, bg=BG)
-        progress_row.pack(fill="x", pady=(8, 0), padx=(0, 22))
-        self.progress = ttk.Progressbar(progress_row, mode="determinate", maximum=100,
-                                         style="Revelo.Horizontal.TProgressbar")
-        self.progress.pack(side="left", fill="x", expand=True)
-        self._label(progress_row, "", textvariable=self.percent_text, color=ACCENT,
-                    weight="bold", size=10, width=7, anchor="e").pack(side="right", padx=(8, 0))
-        self.open_btn = self._button(footer, "Abrir resultado", self.open_result, small=True)
-        self.open_btn.pack(side="right", padx=(8, 0))
-        self.open_btn.configure(state="disabled")
-        self.export_btn = self._button(footer, "Exportar fotos   →", self.start_export, accent=True)
-        self.export_btn.pack(side="right")
-        self.preview_btn = self._button(footer, "◉  Previsualización", self.open_preview)
-        self.preview_btn.pack(side="right", padx=(0, 8))
-
-    def _field(self, row, caption, var, choices, *, width=18, grow=1):
+    def _field(self, row, caption, var, choices, *, column=0, compact=False, last=False):
         holder = tk.Frame(row, bg=SURFACE)
-        holder.pack(side="left", fill="x", expand=True, padx=(0, 13))
+        holder.grid(row=0, column=column, sticky="ew", padx=(0, 0 if last else 9))
         self._label(holder, caption, color=MUTED, size=8, weight="bold").pack(anchor="w", pady=(0, 7))
         combo = ttk.Combobox(holder, values=choices, textvariable=var,
-                             width=width, state="readonly", style="Custom.TCombobox")
-        combo.pack(fill="x")
+                             width=8 if compact else 1, state="readonly", style="Custom.TCombobox")
+        if compact:
+            # Para un Sí/No no hace falta un desplegable de 200 píxeles.
+            combo.pack(anchor="w")
+        else:
+            combo.pack(fill="x")
         return combo
 
     def _panel(self, parent):
