@@ -6,6 +6,8 @@ renderizar al tamaño de papel elegido. El PNG temporal solo sirve de miniatura.
 from __future__ import annotations
 
 from pathlib import Path
+from functools import lru_cache
+import os
 import re
 from PIL import Image, ImageDraw, ImageFont, ImageOps, ImageFilter
 
@@ -19,6 +21,38 @@ THEMES = {
 
 
 CUSTOM_THEME = "Personalizar"
+
+# Selección reducida de fuentes habituales en Windows; no distribuimos archivos
+# de tipografía. Pillow emplea las fuentes instaladas en el equipo y, en otros
+# sistemas, utiliza sustitutas parecidas para las pruebas de desarrollo.
+FONT_CHOICES = (
+    "Georgia", "Arial", "Calibri", "Segoe UI", "Times New Roman",
+    "Verdana", "Trebuchet MS", "Courier New", "Comic Sans MS", "Impact",
+)
+
+# Nombre de archivo Windows y sustituta disponible en entornos Linux.
+_FONT_FILES = {
+    "Georgia": (("georgia.ttf", "DejaVuSerif.ttf"),
+                ("georgiab.ttf", "DejaVuSerif-Bold.ttf")),
+    "Arial": (("arial.ttf", "LiberationSans-Regular.ttf"),
+              ("arialbd.ttf", "LiberationSans-Bold.ttf")),
+    "Calibri": (("calibri.ttf", "Lato-Regular.ttf"),
+                ("calibrib.ttf", "Lato-Bold.ttf")),
+    "Segoe UI": (("segoeui.ttf", "DejaVuSans.ttf"),
+                 ("segoeuib.ttf", "DejaVuSans-Bold.ttf")),
+    "Times New Roman": (("times.ttf", "LiberationSerif-Regular.ttf"),
+                        ("timesbd.ttf", "LiberationSerif-Bold.ttf")),
+    "Verdana": (("verdana.ttf", "DejaVuSans.ttf"),
+                ("verdanab.ttf", "DejaVuSans-Bold.ttf")),
+    "Trebuchet MS": (("trebuc.ttf", "Lato-Regular.ttf"),
+                     ("trebucbd.ttf", "Lato-Bold.ttf")),
+    "Courier New": (("cour.ttf", "LiberationMono-Regular.ttf"),
+                    ("courbd.ttf", "LiberationMono-Bold.ttf")),
+    "Comic Sans MS": (("comic.ttf", "DejaVuSans.ttf"),
+                      ("comicbd.ttf", "DejaVuSans-Bold.ttf")),
+    "Impact": (("impact.ttf", "DejaVuSansCondensed-Bold.ttf"),
+               ("impact.ttf", "DejaVuSansCondensed-Bold.ttf")),
+}
 
 
 def _hex(value: str, name: str) -> str:
@@ -66,6 +100,11 @@ def validate_special_spec(spec: dict) -> dict:
            "background_color": _hex(spec.get("background_color", "#F6EBDC"), "fondo"),
            "text_color": _hex(spec.get("text_color", "#1B2D43"), "título"),
            "subtitle_color": _hex(spec.get("subtitle_color", "#334C63"), "subtítulo")}
+    for element in ("title", "subtitle"):
+        family = spec.get(element + "_font", "Georgia")
+        if not isinstance(family, str) or family not in FONT_CHOICES:
+            raise ValueError(f"Tipo de letra del {element} no reconocido")
+        out[element + "_font"] = family
     for key, default, lower, upper in (
         ("title_size", 12, 3, 24), ("subtitle_size", 6, 2, 18),
     ):
@@ -240,7 +279,8 @@ def draw_custom_text(canvas: Image.Image, spec: dict,
         if not spec.get("show_"+element) or not spec.get(element):
             continue
         size_px = max(9, int(min(cw, ch) * spec[element+"_size"] / 100))
-        font = _font(size_px, bold=element == "title")
+        font = _font(size_px, bold=element == "title",
+                     family=spec.get(element + "_font", "Georgia"))
         lines = _text_lines(draw, spec[element], font, int(cw*.96))
         if not lines:
             continue
@@ -269,25 +309,39 @@ def render_custom_page(spec: dict, size: tuple[int, int],
     return draw_custom_text(canvas, spec, safe_box)
 
 
-def _font(size: int, *, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    """Fuentes de Windows, con alternativas gratuitas de Linux."""
-    roots = [Path("C:/Windows/Fonts"), Path("/usr/share/fonts/truetype/dejavu")]
-    filenames = (["georgiab.ttf", "arialbd.ttf", "DejaVuSans-Bold.ttf"] if bold else
-                 ["georgia.ttf", "arial.ttf", "DejaVuSans.ttf"])
-    for root in roots:
-        for filename in filenames:
+@lru_cache(maxsize=256)
+def _font(size: int, *, bold: bool = False, family: str = "Georgia") -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    """Carga una de las diez fuentes, sin empaquetar tipografías de terceros.
+
+    En Windows usa fuentes instaladas por el sistema; las sustitutas Linux
+    permiten previsualizar y comprobar las exportaciones en desarrollo.
+    """
+    if family not in FONT_CHOICES:
+        family = "Georgia"
+    candidates = _FONT_FILES[family][int(bool(bold))]
+    size = max(9, int(size))
+    roots = (
+        Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts",
+        Path("C:/Windows/Fonts"),
+        Path("/usr/share/fonts/truetype/dejavu"),
+        Path("/usr/share/fonts/truetype/liberation2"),
+        Path("/usr/share/fonts/truetype/lato"),
+        Path("/usr/share/fonts/truetype/msttcorefonts"),
+    )
+    for filename in candidates:
+        for root in roots:
             target = root / filename
             if target.is_file():
                 try:
-                    return ImageFont.truetype(str(target), max(9, int(size)))
+                    return ImageFont.truetype(str(target), size)
                 except OSError:
-                    pass
-    for filename in filenames:
+                    continue
         try:
-            return ImageFont.truetype(filename, max(9, int(size)))
+            return ImageFont.truetype(filename, size)
         except OSError:
             pass
-    return ImageFont.load_default(size=max(9, int(size)))
+    # Si un Windows muy reducido no tiene la fuente, seguimos funcionando.
+    return ImageFont.load_default(size=size)
 
 
 def _text_lines(draw: ImageDraw.ImageDraw, text: str, font, max_width: int) -> list[str]:

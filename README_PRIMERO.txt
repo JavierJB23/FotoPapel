@@ -1,3 +1,56 @@
+REVELO v1.5.2 FIX04 — TIPOGRAFÍAS Y PALETAS EN PERSONALIZAR
+=========================================================
+
+Actualización incremental sobre v1.5.2 FIX03. No modifica el QR, el gestor de
+PDF, la ordenación ni el sistema de exportación. Conserva el editor no modal,
+las imágenes de fondo, el difuminado y el arrastre fluido.
+
+NOVEDADES
+1. DIEZ TIPOGRAFÍAS PARA PORTADAS Y SEPARADORES PERSONALIZADOS
+   - Georgia, Arial, Calibri, Segoe UI, Times New Roman, Verdana,
+     Trebuchet MS, Courier New, Comic Sans MS e Impact.
+   - Título y subtítulo se configuran por separado.
+   - El tamaño puede ajustarse mediante la barra o escribiendo un número
+     exacto. Son porcentajes relativos al área segura de texto.
+   - El editor, las miniaturas, Word y PDF usan el mismo motor de texto.
+   - No se distribuyen fuentes: Revelo usa las instaladas en Windows.
+     Si falta alguna fuente, usa una alternativa para no bloquear la edición.
+
+2. COLORES DE LOS DISEÑOS CLÁSICOS EN EL MODO PERSONALIZAR
+   - Blanco, Crema, Aguamarina y Azul noche aparecen en un desplegable.
+   - Al escoger una paleta se asignan fondo, título y subtítulo con colores
+     legibles. Puedes cambiar después los colores de texto individualmente.
+   - «Otro color…» abre el selector de color de Windows.
+   - Funciona con «Color liso», con fotografía de fondo y con el relleno
+     difuminado. No limita el movimiento de títulos ni la escala de fotos.
+
+COMPATIBILIDAD
+ - Los proyectos anteriores siguen abriéndose. Sus textos personalizados
+   conservan Georgia si no tenían una fuente elegida explícitamente.
+ - Los proyectos .revelo y PDF reversibles nuevos guardan fuente, color y tamaño.
+ - Las plantillas prediseñadas no cambian: solo se amplía «Personalizar».
+
+INSTALAR EL FIX04
+1. Descarga y descomprime el ZIP de actualización.
+2. Abre https://github.com/JavierJB23/FotoPapel/upload/main
+3. Sube custom_editor.py, special_pages.py y README_PRIMERO.txt directamente
+   a la raíz, sustituyendo los existentes.
+4. Sube tests/test_editor_fonts_palettes.py dentro de la carpeta tests.
+5. Pulsa Commit changes. Cuando la nueva ejecución de Actions esté verde,
+   descarga Revelo-Windows-EXE y extrae Revelo.exe.
+6. Conserva el ejecutable anterior hasta verificar las dos mejoras en Windows.
+
+PRUEBA SUGERIDA
+ - Crea una portada Personalizar y selecciona Azul noche.
+ - Cambia el título a Impact, el subtítulo a Courier New y los tamaños a
+   19 y 8. Mueve los textos y comprueba la previsualización.
+ - Guarda la portada, exporta a PDF y guárdala en un proyecto .revelo.
+ - Reabre el proyecto y comprueba que mantiene tipografías y colores.
+
+--------------------------------------------------------------------
+DOCUMENTACIÓN DE LAS VERSIONES ANTERIORES
+--------------------------------------------------------------------
+
 REVELO v1.5.2 FIX03 — EDITOR LIBRE Y FONDO DIFUMINADO
 =====================================================
 

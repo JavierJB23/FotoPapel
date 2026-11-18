@@ -12,7 +12,7 @@ import revelo_dialogs as messagebox
 
 from PIL import Image, ImageOps, ImageTk
 from special_pages import (CUSTOM_THEME, validate_special_spec, render_special_page,
-                           render_custom_background, draw_custom_text, KINDS)
+                           render_custom_background, draw_custom_text, KINDS, THEMES, FONT_CHOICES)
 from processor import printable_box
 
 BG = '#0B1422'
@@ -47,6 +47,12 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
     """
     image_dir.mkdir(parents=True, exist_ok=True)
     initial = dict(initial)
+    original_theme = initial.get('theme', 'Crema')
+    # Pasar de una página prediseñada a Personalizar conserva sus colores.
+    if original_theme in THEMES:
+        initial.setdefault('background_color', THEMES[original_theme]['background'])
+        initial.setdefault('text_color', THEMES[original_theme]['text'])
+        initial.setdefault('subtitle_color', THEMES[original_theme]['muted'])
     initial['theme'] = CUSTOM_THEME
     initial.setdefault('background_type', 'color')
     initial.setdefault('background_image', '')
@@ -56,6 +62,8 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
     initial.setdefault('subtitle_color', '#334C63')
     initial.setdefault('title_size', 12)
     initial.setdefault('subtitle_size', 6)
+    initial.setdefault('title_font', 'Georgia')
+    initial.setdefault('subtitle_font', 'Georgia')
     initial.setdefault('title_x', .5)
     initial.setdefault('title_y', .42)
     initial.setdefault('subtitle_x', .5)
@@ -129,6 +137,8 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
         'subtitle_color': tk.StringVar(value=initial['subtitle_color']),
         'title_size': tk.IntVar(value=initial['title_size']),
         'subtitle_size': tk.IntVar(value=initial['subtitle_size']),
+        'title_font': tk.StringVar(value=initial['title_font']),
+        'subtitle_font': tk.StringVar(value=initial['subtitle_font']),
         'show_title': tk.BooleanVar(value=initial['show_title']),
         'show_subtitle': tk.BooleanVar(value=initial['show_subtitle']),
         'image_mode': tk.StringVar(value=initial['image_mode']),
@@ -180,26 +190,57 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
                        activeforeground=ACCENT, selectcolor=PANEL,
                        font=('Segoe UI', 9)).pack(side='left', padx=(0,8))
 
+    # Los cuatro colores clásicos también aparecen dentro de Personalizar.
+    # La selección de paleta cambia fondo y colores legibles del texto, pero
+    # después se pueden modificar independientemente los títulos y posiciones.
+    palette_names = [*THEMES, 'Otro color…']
+    existing = fields['background_color'].get().upper()
+    chosen_palette = next((name for name, theme in THEMES.items()
+                           if theme['background'].upper() == existing), 'Otro color…')
+    palette = tk.StringVar(value=chosen_palette)
+    palette_widget = select('PALETA DE COLORES', palette, palette_names)
+
     def color_button(caption, field):
         row = tk.Frame(left, bg=SURFACE)
         row.pack(fill='x', pady=(6, 0))
         tk.Label(row, text=caption, fg=MUTED, bg=SURFACE,
                  font=('Segoe UI', 9)).pack(side='left')
-        chip = tk.Button(row, text='Elegir color', bg=fields[field].get(),
-                         fg='#111111' if sum(int(fields[field].get()[i:i+2],16) for i in (1,3,5)) > 425 else '#FFFFFF',
+        chip = tk.Button(row, text='Elegir color…', bg=fields[field].get(),
                          relief='flat', padx=8, pady=3, cursor='hand2')
         chip.pack(side='right')
+
+        def color_changed(*_):
+            value = fields[field].get()
+            chip.configure(bg=value,
+                           fg='#111111' if sum(int(value[i:i+2],16) for i in (1,3,5)) > 425 else '#FFFFFF')
+        fields[field].trace_add('write', color_changed)
+        color_changed()
+
         def choose():
             result = colorchooser.askcolor(color=fields[field].get(), parent=window,
                                           title='Revelo · ' + caption)
             if result and result[1]:
                 fields[field].set(result[1].upper())
-                chip.configure(bg=result[1],
-                               fg='#111111' if sum(int(result[1][i:i+2],16) for i in (1,3,5)) > 425 else '#FFFFFF')
+                if field == 'background_color':
+                    palette.set('Otro color…')
         chip.configure(command=choose)
         return chip
 
-    color_button('Color bajo la foto', 'background_color')
+    background_chip = color_button('Color bajo la foto', 'background_color')
+
+    def palette_selected(event=None):
+        name = palette.get()
+        if name in THEMES:
+            values = THEMES[name]
+            fields['background_color'].set(values['background'].upper())
+            fields['text_color'].set(values['text'].upper())
+            fields['subtitle_color'].set(values['muted'].upper())
+        elif name == 'Otro color…':
+            background_chip.invoke()
+
+    # Evento de selección humana (no un trace) para no reabrir el selector
+    # al elegir un color manualmente en el diálogo de Windows.
+    palette_widget.bind('<<ComboboxSelected>>', palette_selected)
     label('RELLENO DEL ESPACIO LIBRE')
     fill_controls = tk.Frame(left, bg=SURFACE)
     fill_controls.pack(fill='x')
@@ -244,18 +285,28 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
                        insertbackground=ACCENT, relief='flat', font=('Segoe UI', 10))
         ent.pack(fill='x', ipady=5)
         return ent
+    def size_control(element, caption, smallest, largest):
+        label(caption + ' (% de la zona de texto)')
+        row = tk.Frame(left, bg=SURFACE)
+        row.pack(fill='x')
+        slider = tk.Scale(row, variable=fields[element + '_size'], from_=smallest, to=largest,
+                          showvalue=False, orient='horizontal', bg=SURFACE, fg=TEXT,
+                          activebackground=ACCENT, highlightthickness=0, troughcolor=PANEL)
+        slider.pack(side='left', fill='x', expand=True)
+        tk.Spinbox(row, from_=smallest, to=largest, increment=1,
+                   textvariable=fields[element + '_size'], width=3,
+                   bg=PANEL, fg=TEXT, insertbackground=ACCENT,
+                   buttonbackground=PANEL, relief='flat', justify='center',
+                   font=('Segoe UI', 10)).pack(side='right', padx=(9,0))
+
     text_input('title', 'TÍTULO (OPCIONAL)')
+    select('TIPOGRAFÍA DEL TÍTULO', fields['title_font'], list(FONT_CHOICES))
     color_button('Color del título', 'text_color')
-    label('Tamaño del título')
-    tk.Scale(left, variable=fields['title_size'], from_=3, to=24, orient='horizontal',
-             bg=SURFACE, fg=TEXT, activebackground=ACCENT,
-             highlightthickness=0, troughcolor=PANEL).pack(fill='x')
+    size_control('title', 'Tamaño del título', 3, 24)
     text_input('subtitle', 'SUBTÍTULO (OPCIONAL)')
+    select('TIPOGRAFÍA DEL SUBTÍTULO', fields['subtitle_font'], list(FONT_CHOICES))
     color_button('Color del subtítulo', 'subtitle_color')
-    label('Tamaño del subtítulo')
-    tk.Scale(left, variable=fields['subtitle_size'], from_=2, to=18, orient='horizontal',
-             bg=SURFACE, fg=TEXT, activebackground=ACCENT,
-             highlightthickness=0, troughcolor=PANEL).pack(fill='x')
+    size_control('subtitle', 'Tamaño del subtítulo', 2, 18)
 
     tk.Label(right, text='VISTA PREVIA · POSICIÓN LIBRE', bg=SURFACE, fg=TEXT,
              font=('Segoe UI', 11, 'bold')).pack(anchor='w')
@@ -316,6 +367,8 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
             'text_color': fields['text_color'].get(),
             'subtitle_color': fields['subtitle_color'].get(),
             'title_size': fields['title_size'].get(), 'subtitle_size': fields['subtitle_size'].get(),
+            'title_font': fields['title_font'].get(),
+            'subtitle_font': fields['subtitle_font'].get(),
             'show_title': fields['show_title'].get(), 'show_subtitle': fields['show_subtitle'].get(),
             'image_mode': fields['image_mode'].get(),
             'image_zoom_x': fields['image_zoom_x'].get(),
