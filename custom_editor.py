@@ -6,6 +6,7 @@ import shutil
 import tkinter as tk
 from tkinter import ttk, filedialog, colorchooser
 import uuid
+import sys
 from collections.abc import Callable, Sequence
 
 import revelo_dialogs as messagebox
@@ -24,15 +25,57 @@ MUTED = '#9CB1C7'
 PREVIEW_FRAME_MS = 16  # Límite de repintado objetivo (~60 Hz); no una garantía de FPS.
 
 
-def editor_initial_size(screen_width: int, screen_height: int) -> tuple[int, int]:
-    """Calcula un tamaño compacto y deja espacio para la barra de tareas.
+def editor_initial_size(screen_width: int, available_height: int) -> tuple[int, int]:
+    """Editor casi a altura completa, sin sobrepasar el área utilizable.
 
-    Como las propiedades disponen de scroll, no se pierden controles al
-    reducir la altura de la ventana en equipos con escalado de Windows.
+    `available_height` es la altura libre de la barra de tareas; se reserva una
+    holgura para el marco y la barra de título para que el pie y los bordes de la ventana se vean enteros.
     """
-    width = min(1030, max(790, round(screen_width * .75)))
-    height = min(680, max(510, round(screen_height * .72)))
+    width = min(1150, max(790, round(screen_width * .83)))
+    height = max(420, available_height - 72)
     return width, height
+
+
+def editor_work_area(window: tk.Toplevel) -> tuple[int, int, int, int]:
+    """Área útil del monitor: en Windows excluye la barra de tareas.
+
+    Evita confundir la altura total del monitor con el espacio real disponible.
+    En otros sistemas se deja una holgura conservadora para paneles y docks.
+    """
+    screen_w, screen_h = window.winfo_screenwidth(), window.winfo_screenheight()
+    if sys.platform == 'win32':
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class RECT(ctypes.Structure):
+                _fields_ = [('left', wintypes.LONG), ('top', wintypes.LONG),
+                            ('right', wintypes.LONG), ('bottom', wintypes.LONG)]
+
+            rect = RECT()
+            if ctypes.windll.user32.SystemParametersInfoW(0x0030, 0,
+                                                           ctypes.byref(rect), 0):
+                left = max(0, rect.left)
+                top = max(0, rect.top)
+                right = min(screen_w, rect.right)
+                bottom = min(screen_h, rect.bottom)
+                if right - left >= 790 and bottom - top >= 480:
+                    return left, top, right, bottom
+        except (OSError, AttributeError, ValueError):
+            pass
+    return 0, 0, screen_w, max(480, screen_h - 55)
+
+
+def editor_initial_geometry(area: tuple[int, int, int, int]) -> str:
+    """Ubica el editor completo en pantalla, con la barra de tareas libre."""
+    left, top, right, bottom = area
+    available_w, available_h = right - left, bottom - top
+    width, height = editor_initial_size(available_w, available_h)
+    width = min(width, available_w)
+    height = min(height, available_h)
+    x = left + max(0, (available_w - width) // 2)
+    y = top + min(24, max(0, available_h - height))
+    return f'{width}x{height}+{x}+{y}'
 
 
 def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
@@ -78,16 +121,12 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
 
     window = tk.Toplevel(root)
     window.title('Revelo · Personalizar portada o separador')
-    # Con escalado del 125/150 % el tamaño anterior podía ocultar el pie.
-    # La vista previa se adapta y las opciones ya admiten scroll.
-    editor_w, editor_h = editor_initial_size(
-        window.winfo_screenwidth(), window.winfo_screenheight()
-    )
-    window.geometry(f'{editor_w}x{editor_h}')
-    window.minsize(790, 510)
+    # La geometría usa el área de trabajo real (sin barra de tareas).
+    # NO marcar como ventana "transient": en Windows eso oculta el botón
+    # Minimizar del marco nativo. Conservamos el editor NO modal.
+    window.geometry(editor_initial_geometry(editor_work_area(window)))
+    window.minsize(790, 470)
     window.configure(bg=BG)
-    # Sin grab_set: se puede desplazar esta ventana y cambiar ajustes en Revelo.
-    window.transient(root)
 
     frame = tk.Frame(window, bg=BG, padx=18, pady=15)
     frame.pack(fill='both', expand=True)
@@ -118,10 +157,31 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
     scroll_window = controls_canvas.create_window((0,0),window=left,anchor='nw')
     left.bind('<Configure>',lambda e: controls_canvas.configure(scrollregion=controls_canvas.bbox('all')))
     controls_canvas.bind('<Configure>',lambda e: controls_canvas.itemconfigure(scroll_window,width=e.width))
+    # Clase de eventos propia y prioritaria: atrapa la rueda ANTES de que
+    # ttk.Combobox, tk.Scale y tk.Spinbox cambien valores por defecto.
+    # Funciona sobre todos los hijos del panel, no solo sobre el Canvas.
+    wheel_tag = f'ReveloWheel_{id(window)}'
     def wheel(event):
-        controls_canvas.yview_scroll(-int(event.delta / 120) if event.delta else 0, 'units')
-    controls_canvas.bind('<MouseWheel>', wheel)
-    left.bind('<MouseWheel>',wheel)
+        if getattr(event, 'num', 0) in (4, 5):  # X11 / Linux
+            steps = -3 if event.num == 4 else 3
+        else:
+            delta = getattr(event, 'delta', 0)
+            if not delta:
+                return 'break'
+            direction = -1 if delta > 0 else 1
+            steps = direction * (3 * max(1, round(abs(delta) / 120))
+                                 if abs(delta) >= 120 else 1)
+        controls_canvas.yview_scroll(steps, 'units')
+        return 'break'
+    for wheel_event in ('<MouseWheel>', '<Button-4>', '<Button-5>'):
+        window.bind_class(wheel_tag, wheel_event, wheel)
+
+    def register_scroll_widgets(widget):
+        tags = widget.bindtags()
+        if wheel_tag not in tags:
+            widget.bindtags((wheel_tag,) + tags)
+        for child in widget.winfo_children():
+            register_scroll_widgets(child)
     right = tk.Frame(body, bg=SURFACE, padx=12, pady=12)
     right.pack(side='left', fill='both', expand=True)
 
@@ -535,6 +595,9 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
     def editor_destroyed(event):
         if event.widget is not window:
             return
+        for wheel_event in ('<MouseWheel>', '<Button-4>', '<Button-5>'):
+            try: window.unbind_class(wheel_tag, wheel_event)
+            except tk.TclError: pass
         for var, trace in setting_traces:
             try: var.trace_remove('write', trace)
             except tk.TclError: pass
@@ -563,5 +626,6 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
     tk.Button(buttons, text='Guardar página personalizada', command=save,
               bg=ACCENT, fg=BG, relief='flat', font=('Segoe UI', 10, 'bold'),
               padx=20, pady=9).pack(side='right', padx=(0,9))
+    register_scroll_widgets(rail)
     window.after(30, refresh)
     return window

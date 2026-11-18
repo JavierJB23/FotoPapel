@@ -1,3 +1,40 @@
+REVELO v1.5.2 FIX05 — SCROLL Y VENTANA DEL EDITOR
+====================================================
+
+Corrección incremental sobre Revelo v1.5.2 FIX04. No modifica la maquetación,
+el QR, las páginas personalizadas ni las exportaciones.
+
+CAMBIOS
+1. El panel de opciones del editor personalizado responde a la rueda del ratón
+   aunque el cursor esté sobre un desplegable, barra, campo o botón.
+   Los desplegables y tamaños NO se modifican con la rueda. Para cambiar sus
+   valores se usa clic, teclado o el control que corresponda.
+2. El editor se abre casi a toda la altura útil del monitor, dejando libre la
+   barra de tareas y los botones de Guardar/Cancelar siempre visibles.
+3. Se usa la ventana normal de Windows en lugar de una ventana transitoria,
+   permitiendo el botón Minimizar junto a los controles habituales de la barra
+   de título. Minimizar NO descarta el contenido sin guardar.
+4. Sigue siendo un editor NO modal: se pueden modificar los ajustes de papel
+   en Revelo sin cerrar el editor.
+
+ACTUALIZACIÓN EN GITHUB
+1. Descomprime el ZIP de FIX05.
+2. Ve a https://github.com/JavierJB23/FotoPapel/upload/main
+3. Sube custom_editor.py y README_PRIMERO.txt a la raíz, sustituyendo los
+   anteriores, y los dos archivos de test dentro de tests/.
+4. Pulsa Commit changes. Abre Actions y descarga Revelo-Windows-EXE cuando
+   el trabajo termine en verde. No cambies el archivo de compilación.
+
+PRUEBA RECOMENDADA
+- Abre Personalizar. Desplázate con la rueda sobre cualquier desplegable:
+  el valor debe quedar intacto mientras baja/sube el panel izquierdo.
+- Confirma que abre alto, deja ver Guardar y Cancelar y tiene botón minimizar.
+- Minimiza, vuelve al editor y comprueba que no perdió los cambios.
+
+--------------------------------------------------------------------
+DOCUMENTACIÓN ANTERIOR
+--------------------------------------------------------------------
+
 REVELO v1.5.2 FIX04 — TIPOGRAFÍAS Y PALETAS EN PERSONALIZAR
 =========================================================
 
