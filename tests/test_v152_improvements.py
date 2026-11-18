@@ -87,3 +87,14 @@ def test_portable_revelo_project_remembers_freely_transformed_image(tmp_path):
     assert recovered['image_zoom_y']==.6
     assert recovered['image_x']==.18
     assert Path(recovered['background_image']).exists()
+
+
+def test_editor_initial_size_keeps_footer_within_small_screens():
+    from custom_editor import editor_initial_size
+    for screen_w, screen_h in ((1366, 1050), (1366, 768), (1280, 720), (1920, 1080)):
+        available_h = screen_h - 55  # barra de tareas aproximada
+        w, h = editor_initial_size(screen_w, available_h)
+        assert 790 <= w <= 1150
+        assert h == available_h - 72
+        assert h + 40 <= available_h
+        assert w <= max(screen_w, 790)
