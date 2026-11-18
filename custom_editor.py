@@ -21,6 +21,17 @@ TEXT = '#F1F6FB'
 MUTED = '#9CB1C7'
 
 
+def editor_initial_size(screen_width: int, screen_height: int) -> tuple[int, int]:
+    """Calcula un tamaño compacto y deja espacio para la barra de tareas.
+
+    Como las propiedades disponen de scroll, no se pierden controles al
+    reducir la altura de la ventana en equipos con escalado de Windows.
+    """
+    width = min(1030, max(790, round(screen_width * .75)))
+    height = min(680, max(510, round(screen_height * .72)))
+    return width, height
+
+
 def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
                      landscape: bool, binding: bool, on_save):
     """Abre editor modal; llama on_save(spec) solamente tras pulsar Guardar."""
@@ -48,8 +59,13 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
 
     window = tk.Toplevel(root)
     window.title('Revelo · Personalizar portada o separador')
-    window.geometry('1100x820')
-    window.minsize(950, 690)
+    # Con escalado del 125/150 % el tamaño anterior podía ocultar el pie.
+    # La vista previa se adapta y las opciones ya admiten scroll.
+    editor_w, editor_h = editor_initial_size(
+        window.winfo_screenwidth(), window.winfo_screenheight()
+    )
+    window.geometry(f'{editor_w}x{editor_h}')
+    window.minsize(790, 510)
     window.configure(bg=BG)
     window.transient(root)
 
