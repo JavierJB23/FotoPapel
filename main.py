@@ -368,6 +368,25 @@ class ReveloApp:
     def _groups(self) -> list[tuple[Path, ...]]:
         return page_groups(self.pages, int(self.per_sheet.get()), self.special_pages)
 
+    def _special_landscape(self, path: Path | None = None) -> bool:
+        """Resuelve la orientación de portadas en la configuración ACTUAL.
+
+        Vertical y Horizontal tienen prioridad sobre la miniatura existente.
+        Solo en Automática se reutiliza su orientación (o la primera hoja).
+        """
+        selection = self.orientation.get()
+        if selection == "Horizontal":
+            return True
+        if selection == "Vertical":
+            return False
+        if path is not None and path in self.details:
+            w, h = self.details[path]
+            return w > h
+        if self.pages:
+            w, h = self.details.get(self.pages[0], (1, 2))
+            return w > h
+        return False
+
     def _commit_special_page(self, spec: dict, path: Path | None) -> None:
         """Guarda portada/separador desde el modo clásico o personalizar."""
         spec = validate_special_spec(spec)
@@ -375,13 +394,7 @@ class ReveloApp:
             raise ValueError('Ya tienes una portada. Edítala o elimínala antes de crear otra.')
         new = path is None
         candidate = (Path(self.special_temp.name) / f'pagina_{uuid.uuid4().hex}.png') if new else path
-        landscape = self.orientation.get() == 'Horizontal'
-        if self.orientation.get() == 'Automática' and self.pages and new:
-            sw, sh = self.details.get(self.pages[0], (1, 2))
-            landscape = sw > sh
-        if not new:
-            sw, sh = self.details.get(path, (1, 2))
-            landscape = sw > sh
+        landscape = self._special_landscape(path)
         save_special_thumbnail(candidate, spec, landscape=landscape)
         self.thumbnails.pop(candidate, None)
         self.thumbnails_small.pop(candidate, None)
@@ -403,17 +416,15 @@ class ReveloApp:
         if self.is_busy:
             return
         spec = dict(initial or self.special_pages.get(path) or {})
-        landscape = self.orientation.get() == 'Horizontal'
-        if path in self.details:
-            w, h = self.details[path]
-            landscape = w > h
-        elif self.orientation.get() == 'Automática' and self.pages:
-            w, h = self.details.get(self.pages[0], (1,2))
-            landscape = w > h
+        landscape = self._special_landscape(path)
+        paper_w_mm, paper_h_mm = PAPER_SIZES[self.paper.get()]
+        if landscape:
+            paper_w_mm, paper_h_mm = paper_h_mm, paper_w_mm
         def commit(custom_spec):
             self._commit_special_page(custom_spec, path)
         edit_custom_page(self.root, initial=spec, image_dir=Path(self.special_temp.name),
                          landscape=landscape, binding=self.binding.get() == 'Sí',
+                         paper_dimensions_mm=(paper_w_mm, paper_h_mm),
                          on_save=commit)
 
     def special_page_dialog(self, path: Path | None = None):

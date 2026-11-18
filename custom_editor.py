@@ -33,7 +33,8 @@ def editor_initial_size(screen_width: int, screen_height: int) -> tuple[int, int
 
 
 def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
-                     landscape: bool, binding: bool, on_save):
+                     landscape: bool, binding: bool, on_save,
+                     paper_dimensions_mm: tuple[float, float] | None = None):
     """Abre editor modal; llama on_save(spec) solamente tras pulsar Guardar."""
     image_dir.mkdir(parents=True, exist_ok=True)
     initial = dict(initial)
@@ -129,7 +130,11 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
     linked_scale = tk.BooleanVar(value=True)
     refresh_job = [None]
     preview_img = [None]
-    page_size = (650, 850) if not landscape else (850, 650)
+    # La vista previa reproduce la relación de aspecto del papel elegido;
+    # no usa una proporción fija de A5 ni la miniatura de una portada antigua.
+    physical_mm = paper_dimensions_mm or ((210.0, 148.0) if landscape else (148.0, 210.0))
+    page_size = (max(1, round(physical_mm[0] * 4)),
+                 max(1, round(physical_mm[1] * 4)))
     canvas_box = [0, 0, 1, 1]
     image_drag = [None]
     drag_text = [None]
@@ -304,7 +309,7 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
             iw, ih = max(80,int(p_w * scale)), max(80,int(p_h * scale))
             canvas_box[:] = ((canvas.winfo_width()-iw)//2, (canvas.winfo_height()-ih)//2, iw, ih)
             if binding:
-                safe = printable_box((iw,ih), (210,148) if landscape else (148,210), binding=True)
+                safe = printable_box((iw,ih), physical_mm, binding=True)
             else:
                 safe = (0,0,iw,ih)
             page = render_special_page(spec, (iw, ih), safe)
@@ -347,7 +352,7 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
         else:
             if not fields['show_'+key].get() or not fields[key].get():
                 return
-            safe=printable_box((iw,ih),(210,148) if landscape else (148,210),binding=True) if binding else (0,0,iw,ih)
+            safe=printable_box((iw,ih),physical_mm,binding=True) if binding else (0,0,iw,ih)
             x0,y0,x1,y1=safe
             # Sin cuadrículas, nodos ni pasos: píxeles continuos de la vista.
             positions[key+'_x']=round(min(1,max(0,(event.x-ox-x0)/max(1,x1-x0))),5)
@@ -365,7 +370,7 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
         try:
             spec=draft()
             # Valida también la foto del fondo antes de confirmar.
-            test=render_special_page(spec, (360,260) if landscape else (260,360))
+            test=render_special_page(spec, (round(physical_mm[0]*2), round(physical_mm[1]*2)))
             test.close()
             on_save(spec)
         except Exception as exc:
