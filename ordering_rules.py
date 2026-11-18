@@ -28,3 +28,25 @@ def move_item(paths: list[Path], path: Path, index: int,
     result.remove(path)
     result.insert(index, path)
     return result
+
+
+def click_move(paths: list[Path], selected: Path | None, clicked: Path,
+               special_pages: dict[Path, dict]) -> tuple[list[Path], Path | None, bool]:
+    """Dos clics: primero origen, después destino; la portada permanece fija.
+
+    Retorna (nuevo_orden, siguiente_origen, se_ha_movido). Un clic sobre el
+    mismo elemento deselecciona. Hacer clic en una portada sin origen no la
+    selecciona, ya que no puede moverse.
+    """
+    pages = anchored_order(paths, special_pages)
+    if clicked not in pages:
+        return pages, selected, False
+    cover = cover_path(special_pages)
+    if selected not in pages:
+        return pages, None if clicked == cover else clicked, False
+    if selected == clicked:
+        return pages, None, False
+    if selected == cover:
+        return pages, None if clicked == cover else clicked, False
+    moved = move_item(pages, selected, pages.index(clicked), special_pages)
+    return moved, None, moved != pages

@@ -10,8 +10,10 @@ import threading
 import tempfile
 import uuid
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, filedialog
 from pathlib import Path
+
+import revelo_dialogs as messagebox
 
 from PIL import Image, ImageTk, ImageOps, ImageDraw
 
@@ -24,7 +26,7 @@ from pdf_sources import recover_sources
 from mobile_import import PhoneTransferServer
 from project_io import save_project, load_project, ProjectError
 from special_pages import KINDS, THEMES, CUSTOM_THEME, validate_special_spec, save_special_thumbnail
-from ordering_rules import cover_path, anchored_order, move_item
+from ordering_rules import cover_path, anchored_order, move_item, click_move
 from custom_editor import edit_custom_page
 import qrcode
 
@@ -317,7 +319,7 @@ class ReveloApp:
                                            textvariable=self.per_sheet, width=3,
                                            state="readonly", style="Custom.TCombobox")
         self.per_sheet_combo.pack(side="left")
-        self._label(hint, "Clic: seleccionar · Arrastra o usa ↑ ↓",
+        self._label(hint, "Dos clics: origen → destino · ↑ ↓ para ajustar",
                     size=9, color="#C1F3E5").pack(side="left", padx=(12, 0))
         self.order_area = ScrollingArea(right_panel)
         self.order_area.pack(fill="both", expand=True, padx=9, pady=9)
@@ -879,12 +881,31 @@ class ReveloApp:
             if idx == len(self.pages) - 1 or is_cover:
                 b_down.configure(state='disabled')
             for part in (slot, number, thumb, text_box, name, sub):
-                self._make_draggable(part, path, 'order')
+                part.bind('<ButtonRelease-1>', lambda event, p=path: self._order_click(p))
             self.order_area.bind_wheel_recursive(slot)
         self.order_area._update_scrollregion()
         self.order_area.canvas.yview_moveto(offset)
         if self.preview_window is not None and self.preview_window.winfo_exists():
             self._show_preview_page()
+
+    def _order_click(self, path):
+        """Origen con primer clic, destino con segundo; sin arrastrar ni hacer scroll pulsado."""
+        if self.is_busy:
+            return
+        previously_selected = self.order_selected
+        updated, selected, changed = click_move(self.pages, previously_selected, path, self.special_pages)
+        self.pages = updated
+        self.order_selected = selected
+        if changed:
+            name = self.path_labels.get(previously_selected, previously_selected.name)
+            self.feedback.set(f'«{name}» ahora está en la posición {updated.index(previously_selected) + 1}.')
+        elif selected is not None:
+            self.feedback.set('Elemento señalado. Haz clic en la posición de destino para moverlo; vuelve a pulsarlo para cancelar.')
+        elif path == cover_path(self.special_pages) and previously_selected is None:
+            self.feedback.set('La portada está anclada en la primera posición.')
+        else:
+            self.feedback.set('Selección de ordenación cancelada.')
+        self.render_order()
 
     def _shift(self, index, delta):
         j=index+delta

@@ -77,6 +77,22 @@ def validate_special_spec(spec: dict) -> dict:
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 1:
             raise ValueError(f"Posición de {key} inválida")
         out[key] = round(float(value), 5)
+    # Transformación de la foto de fondo. Los proyectos antiguos no incluyen
+    # estos campos: el valor por defecto «Cubrir» reproduce su resultado.
+    mode = spec.get('image_mode', 'Cubrir')
+    if mode not in ('Encajar', 'Cubrir', 'Libre'):
+        raise ValueError('Modo de ajuste de la foto no reconocido')
+    out['image_mode'] = mode
+    for key, default in (('image_zoom_x', 1.0), ('image_zoom_y', 1.0)):
+        val = spec.get(key, default)
+        if isinstance(val, bool) or not isinstance(val, (int, float)) or not .25 <= val <= 3.0:
+            raise ValueError('Escala de fotografía fuera de rango')
+        out[key] = round(float(val), 4)
+    for key, default in (('image_x', .5), ('image_y', .5)):
+        val = spec.get(key, default)
+        if isinstance(val, bool) or not isinstance(val, (int, float)) or not 0 <= val <= 1:
+            raise ValueError('Posición de fotografía fuera de rango')
+        out[key] = round(float(val), 5)
     for key, default in (("show_title", True), ("show_subtitle", True)):
         value = spec.get(key, default)
         if not isinstance(value, bool):
@@ -91,21 +107,55 @@ def validate_special_spec(spec: dict) -> dict:
     return out
 
 
+def _draw_custom_background(canvas: Image.Image, source: Image.Image, spec: dict) -> None:
+    """Pega foto sobre el color de base, recortando *antes* de escalar a 600 PPP.
+
+    Admite encajar, cubrir y transformación libre con zoom X/Y independientes
+    y centro movible. Nunca crea un bitmap intermedio mayor que la hoja final.
+    """
+    w, h = canvas.size
+    sw, sh = source.size
+    if not (w > 0 and h > 0 and sw > 0 and sh > 0):
+        return
+    mode = spec.get('image_mode','Cubrir')
+    base = max(w/sw,h/sh) if mode == 'Cubrir' else min(w/sw,h/sh)
+    stretch_x = float(spec.get('image_zoom_x',1.0)) if mode == 'Libre' else 1.0
+    stretch_y = float(spec.get('image_zoom_y',1.0)) if mode == 'Libre' else 1.0
+    rendered_w = sw*base*stretch_x
+    rendered_h = sh*base*stretch_y
+    center_x = w*float(spec.get('image_x',.5)) if mode == 'Libre' else w/2
+    center_y = h*float(spec.get('image_y',.5)) if mode == 'Libre' else h/2
+    x0,y0 = center_x-rendered_w/2,center_y-rendered_h/2
+    left,top = max(0,int(round(x0))),max(0,int(round(y0)))
+    right,bottom = min(w,int(round(x0+rendered_w))),min(h,int(round(y0+rendered_h)))
+    if left >= right or top >= bottom:
+        return
+    crop = (max(0,int((left-x0)/rendered_w*sw)),
+            max(0,int((top-y0)/rendered_h*sh)),
+            min(sw,max(1,int((right-x0)/rendered_w*sw)+1)),
+            min(sh,max(1,int((bottom-y0)/rendered_h*sh)+1)))
+    # Resize sólo del trozo visible: evita memorias enormes con zoom 300 %.
+    region = source.crop(crop)
+    try:
+        visible = region.resize((right-left,bottom-top),Image.Resampling.LANCZOS)
+        canvas.paste(visible,(left,top))
+        visible.close()
+    finally:
+        region.close()
+
+
 def render_custom_page(spec: dict, size: tuple[int, int],
                        safe_box: tuple[int,int,int,int] | None = None) -> Image.Image:
     """Fondo a color/foto y títulos ajustables, dibujados en posiciones relativas."""
     w, h = map(int, size)
     canvas = Image.new("RGB", (w, h), spec["background_color"])
     if spec["background_type"] == "imagen":
-        imgpath = Path(spec["background_image"])
-        with Image.open(imgpath) as image:
-            img = ImageOps.exif_transpose(image).convert("RGB")
-            try:
-                filled = ImageOps.fit(img, (w, h), method=Image.Resampling.LANCZOS)
-                canvas.paste(filled, (0, 0))
-                filled.close()
-            finally:
-                img.close()
+        with Image.open(Path(spec['background_image'])) as opened:
+            image = ImageOps.exif_transpose(opened).convert('RGB')
+        try:
+            _draw_custom_background(canvas, image, spec)
+        finally:
+            image.close()
     if spec["kind"] == "Página en blanco":
         return canvas
     if safe_box is None:

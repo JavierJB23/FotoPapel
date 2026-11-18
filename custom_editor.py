@@ -4,8 +4,10 @@ from __future__ import annotations
 from pathlib import Path
 import shutil
 import tkinter as tk
-from tkinter import ttk, filedialog, colorchooser, messagebox
+from tkinter import ttk, filedialog, colorchooser
 import uuid
+
+import revelo_dialogs as messagebox
 
 from PIL import Image, ImageTk
 from special_pages import CUSTOM_THEME, validate_special_spec, render_special_page, KINDS
@@ -38,11 +40,16 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
     initial.setdefault('subtitle_y', .58)
     initial.setdefault('show_title', True)
     initial.setdefault('show_subtitle', True)
+    initial.setdefault('image_mode', 'Cubrir' if initial['background_type']=='imagen' else 'Libre')
+    initial.setdefault('image_zoom_x', 1.0)
+    initial.setdefault('image_zoom_y', 1.0)
+    initial.setdefault('image_x', .5)
+    initial.setdefault('image_y', .5)
 
     window = tk.Toplevel(root)
     window.title('Revelo · Personalizar portada o separador')
-    window.geometry('1060x790')
-    window.minsize(900, 690)
+    window.geometry('1100x820')
+    window.minsize(950, 690)
     window.configure(bg=BG)
     window.transient(root)
 
@@ -61,9 +68,24 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
 
     body = tk.Frame(frame, bg=BG)
     body.pack(fill='both', expand=True)
-    left = tk.Frame(body, bg=SURFACE, width=344, padx=15, pady=12)
-    left.pack(side='left', fill='y', padx=(0, 14))
-    left.pack_propagate(False)
+    # Panel de propiedades desplazable: los controles nuevos no se cortan en
+    # pantallas pequeñas, sin robar espacio a la hoja de previsualización.
+    rail = tk.Frame(body, bg=SURFACE, width=352)
+    rail.pack(side='left', fill='y', padx=(0,14))
+    rail.pack_propagate(False)
+    controls_canvas = tk.Canvas(rail,bg=SURFACE,highlightthickness=0,width=330)
+    scroll = tk.Scrollbar(rail,orient='vertical',command=controls_canvas.yview)
+    controls_canvas.configure(yscrollcommand=scroll.set)
+    scroll.pack(side='right',fill='y')
+    controls_canvas.pack(side='left',fill='both',expand=True)
+    left = tk.Frame(controls_canvas,bg=SURFACE,padx=15,pady=12)
+    scroll_window = controls_canvas.create_window((0,0),window=left,anchor='nw')
+    left.bind('<Configure>',lambda e: controls_canvas.configure(scrollregion=controls_canvas.bbox('all')))
+    controls_canvas.bind('<Configure>',lambda e: controls_canvas.itemconfigure(scroll_window,width=e.width))
+    def wheel(event):
+        controls_canvas.yview_scroll(-int(event.delta / 120) if event.delta else 0, 'units')
+    controls_canvas.bind('<MouseWheel>', wheel)
+    left.bind('<MouseWheel>',wheel)
     right = tk.Frame(body, bg=SURFACE, padx=12, pady=12)
     right.pack(side='left', fill='both', expand=True)
 
@@ -80,13 +102,21 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
         'subtitle_size': tk.IntVar(value=initial['subtitle_size']),
         'show_title': tk.BooleanVar(value=initial['show_title']),
         'show_subtitle': tk.BooleanVar(value=initial['show_subtitle']),
+        'image_mode': tk.StringVar(value=initial['image_mode']),
+        'image_zoom_x': tk.DoubleVar(value=initial['image_zoom_x']),
+        'image_zoom_y': tk.DoubleVar(value=initial['image_zoom_y']),
+        'image_x': tk.DoubleVar(value=initial['image_x']),
+        'image_y': tk.DoubleVar(value=initial['image_y']),
     }
     positions = {key: float(initial[key]) for key in ('title_x', 'title_y', 'subtitle_x', 'subtitle_y')}
     focused = tk.StringVar(value='title')
+    linked_scale = tk.BooleanVar(value=True)
     refresh_job = [None]
     preview_img = [None]
     page_size = (650, 850) if not landscape else (850, 650)
     canvas_box = [0, 0, 1, 1]
+    image_drag = [None]
+    drag_text = [None]
     label_color = MUTED
 
     def label(text):
@@ -128,7 +158,7 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
         chip.configure(command=choose)
         return chip
 
-    color_button('Color del fondo', 'background_color')
+    color_button('Color bajo la foto', 'background_color')
     image_info = tk.StringVar(value=Path(fields['background_image'].get()).name or 'Sin fotografía')
 
     def choose_image():
@@ -178,18 +208,53 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
              bg=SURFACE, fg=TEXT, activebackground=ACCENT,
              highlightthickness=0, troughcolor=PANEL).pack(fill='x')
 
-    tk.Label(right, text='VISTA PREVIA · ARRASTRA LOS TEXTOS', bg=SURFACE, fg=TEXT,
+    tk.Label(right, text='VISTA PREVIA · POSICIÓN LIBRE', bg=SURFACE, fg=TEXT,
              font=('Segoe UI', 11, 'bold')).pack(anchor='w')
     pick = tk.Frame(right, bg=SURFACE)
     pick.pack(fill='x', pady=(8,4))
-    for text, key in [('Mover título', 'title'), ('Mover subtítulo', 'subtitle')]:
+    for text, key in [('Título', 'title'), ('Subtítulo', 'subtitle'), ('Fotografía', 'image')]:
         tk.Radiobutton(pick, text=text, variable=focused, value=key, bg=SURFACE,
                        fg=TEXT, selectcolor=PANEL, activebackground=SURFACE,
                        activeforeground=ACCENT, font=('Segoe UI', 9)).pack(side='left', padx=(0,10))
-    tk.Label(right, text='La zona interior protegida aparece con línea discontinua.',
+    tk.Label(right, text='Haz clic donde quieras colocar el elemento elegido y arrástralo con precisión.',
              bg=SURFACE, fg=MUTED, font=('Segoe UI', 9)).pack(anchor='w', pady=(0,5))
+    photo_controls = tk.Frame(right,bg=SURFACE)
+    photo_controls.pack(fill='x',pady=(3,8))
+    tk.Label(photo_controls,text='FOTO:',bg=SURFACE,fg=MUTED,font=('Segoe UI',9,'bold')).pack(side='left')
+    ttk.Combobox(photo_controls,values=['Encajar','Cubrir','Libre'],state='readonly',
+                 textvariable=fields['image_mode'],width=12).pack(side='left',padx=(8,12))
+    tk.Checkbutton(photo_controls,text='Mantener proporción en escala libre',
+                   variable=linked_scale,bg=SURFACE,fg=TEXT,selectcolor=PANEL,
+                   activebackground=SURFACE,activeforeground=ACCENT,
+                   font=('Segoe UI',9)).pack(side='left')
+
+    zoom_controls = tk.Frame(right,bg=SURFACE)
+    zoom_controls.pack(fill='x',pady=(0,6))
+    tk.Label(zoom_controls,text='Ancho',bg=SURFACE,fg=MUTED,font=('Segoe UI',9)).grid(row=0,column=0,sticky='w')
+    tk.Scale(zoom_controls,from_=.25,to=3.0,resolution=.05,variable=fields['image_zoom_x'],
+             orient='horizontal',bg=SURFACE,fg=TEXT,troughcolor=PANEL,
+             highlightthickness=0,length=165).grid(row=0,column=1,sticky='ew')
+    tk.Label(zoom_controls,text='Alto',bg=SURFACE,fg=MUTED,font=('Segoe UI',9)).grid(row=0,column=2,sticky='w',padx=(12,0))
+    tk.Scale(zoom_controls,from_=.25,to=3.0,resolution=.05,variable=fields['image_zoom_y'],
+             orient='horizontal',bg=SURFACE,fg=TEXT,troughcolor=PANEL,
+             highlightthickness=0,length=165).grid(row=0,column=3,sticky='ew')
+    zoom_controls.columnconfigure(1,weight=1)
+    zoom_controls.columnconfigure(3,weight=1)
+    tk.Label(right,text='Libre: mueve la fotografía y ajusta ancho/alto. El color elegido rellena el espacio restante.',
+             bg=SURFACE,fg=MUTED,font=('Segoe UI',8),wraplength=520,justify='left').pack(anchor='w',pady=(0,5))
     canvas = tk.Canvas(right, bg=PANEL, highlightthickness=0, cursor='fleur')
     canvas.pack(fill='both', expand=True)
+
+    syncing = [False]
+    def sync_zoom(source,target):
+        if syncing[0] or not linked_scale.get() or fields['image_mode'].get() != 'Libre':
+            return
+        syncing[0] = True
+        try:fields[target].set(fields[source].get())
+        finally:syncing[0] = False
+    fields['image_zoom_x'].trace_add('write',lambda *_:sync_zoom('image_zoom_x','image_zoom_y'))
+    fields['image_zoom_y'].trace_add('write',lambda *_:sync_zoom('image_zoom_y','image_zoom_x'))
+
 
     def draft():
         return validate_special_spec({
@@ -202,6 +267,11 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
             'subtitle_color': fields['subtitle_color'].get(),
             'title_size': fields['title_size'].get(), 'subtitle_size': fields['subtitle_size'].get(),
             'show_title': fields['show_title'].get(), 'show_subtitle': fields['show_subtitle'].get(),
+            'image_mode': fields['image_mode'].get(),
+            'image_zoom_x': fields['image_zoom_x'].get(),
+            'image_zoom_y': fields['image_zoom_y'].get(),
+            'image_x': fields['image_x'].get(),
+            'image_y': fields['image_y'].get(),
             **positions,
         })
 
@@ -231,15 +301,11 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
             x0,y0,x1,y1 = safe
             canvas.create_rectangle(ox+x0,oy+y0,ox+x1,oy+y1,
                                     outline=ACCENT, dash=(5,5), width=1)
-            for key,fg in (('title','#FCE39A'),('subtitle','#8AD9FE')):
-                if spec.get('show_'+key) and spec.get(key):
-                    cx=ox+x0+max(0,(x1-x0))*positions[key+'_x']
-                    cy=oy+y0+max(0,(y1-y0))*positions[key+'_y']
-                    radius=10 if focused.get() == key else 6
-                    canvas.create_oval(cx-radius,cy-radius,cx+radius,cy+radius,
-                                       outline=fg, fill=fg if focused.get()==key else '',width=2)
-                    canvas.create_text(cx,cy-16,text='T' if key=='title' else 'S',fill=fg,
-                                       font=('Segoe UI', 10, 'bold'))
+            # Etiqueta discreta del elemento seleccionado fuera del diseño.
+            label_key = focused.get()
+            active_label = {'title':'TÍTULO','subtitle':'SUBTÍTULO','image':'FOTOGRAFÍA'}[label_key]
+            canvas.create_text(ox+9,oy+12,text=active_label,fill=ACCENT,
+                               anchor='w',font=('Segoe UI',8,'bold'))
         except Exception:
             canvas.delete('all')
             canvas.create_text(120,80,text='Elige una foto válida para mostrar la vista previa.',
@@ -253,15 +319,23 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
 
     def on_drag(event):
         key = focused.get()
-        if not fields['show_'+key].get() or not fields[key].get():
+        ox,oy,iw,ih = canvas_box
+        if iw <= 10 or ih <= 10:
             return
-        ox,oy,iw,ih=canvas_box
-        if iw<=10 or ih<=10:
-            return
-        safe=printable_box((iw,ih),(210,148) if landscape else (148,210),binding=True) if binding else (0,0,iw,ih)
-        x0,y0,x1,y1=safe
-        positions[key+'_x']=round(min(.98,max(.02,(event.x-ox-x0)/max(1,x1-x0))),4)
-        positions[key+'_y']=round(min(.98,max(.02,(event.y-oy-y0)/max(1,y1-y0))),4)
+        if key == 'image':
+            if fields['background_type'].get() != 'imagen':
+                return
+            fields['image_mode'].set('Libre')
+            fields['image_x'].set(round(min(1,max(0,(event.x-ox)/iw)),5))
+            fields['image_y'].set(round(min(1,max(0,(event.y-oy)/ih)),5))
+        else:
+            if not fields['show_'+key].get() or not fields[key].get():
+                return
+            safe=printable_box((iw,ih),(210,148) if landscape else (148,210),binding=True) if binding else (0,0,iw,ih)
+            x0,y0,x1,y1=safe
+            # Sin cuadrículas, nodos ni pasos: píxeles continuos de la vista.
+            positions[key+'_x']=round(min(1,max(0,(event.x-ox-x0)/max(1,x1-x0))),5)
+            positions[key+'_y']=round(min(1,max(0,(event.y-oy-y0)/max(1,y1-y0))),5)
         schedule()
 
     canvas.bind('<Button-1>', on_drag)
