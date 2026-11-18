@@ -6,11 +6,13 @@ import shutil
 import tkinter as tk
 from tkinter import ttk, filedialog, colorchooser
 import uuid
+from collections.abc import Callable, Sequence
 
 import revelo_dialogs as messagebox
 
-from PIL import Image, ImageTk
-from special_pages import CUSTOM_THEME, validate_special_spec, render_special_page, KINDS
+from PIL import Image, ImageOps, ImageTk
+from special_pages import (CUSTOM_THEME, validate_special_spec, render_special_page,
+                           render_custom_background, draw_custom_text, KINDS)
 from processor import printable_box
 
 BG = '#0B1422'
@@ -19,6 +21,7 @@ PANEL = '#1B2D43'
 ACCENT = '#4CD9B5'
 TEXT = '#F1F6FB'
 MUTED = '#9CB1C7'
+PREVIEW_FRAME_MS = 16  # Límite de repintado objetivo (~60 Hz); no una garantía de FPS.
 
 
 def editor_initial_size(screen_width: int, screen_height: int) -> tuple[int, int]:
@@ -34,14 +37,21 @@ def editor_initial_size(screen_width: int, screen_height: int) -> tuple[int, int
 
 def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
                      landscape: bool, binding: bool, on_save,
-                     paper_dimensions_mm: tuple[float, float] | None = None):
-    """Abre editor modal; llama on_save(spec) solamente tras pulsar Guardar."""
+                     paper_dimensions_mm: tuple[float, float] | None = None,
+                     page_settings: Callable[[], tuple[tuple[float, float], bool]] | None = None,
+                     settings_vars: Sequence[tk.Variable] = ()):
+    """Abre un editor NO modal y guarda el diseño sólo con «Guardar».
+
+    Cuando se proporciona page_settings, la orientación, el papel y los
+    márgenes del programa principal se reflejan en el editor sin cerrarlo.
+    """
     image_dir.mkdir(parents=True, exist_ok=True)
     initial = dict(initial)
     initial['theme'] = CUSTOM_THEME
     initial.setdefault('background_type', 'color')
     initial.setdefault('background_image', '')
     initial.setdefault('background_color', '#F6EBDC')
+    initial.setdefault('background_fill', 'color')
     initial.setdefault('text_color', '#1B2D43')
     initial.setdefault('subtitle_color', '#334C63')
     initial.setdefault('title_size', 12)
@@ -68,6 +78,7 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
     window.geometry(f'{editor_w}x{editor_h}')
     window.minsize(790, 510)
     window.configure(bg=BG)
+    # Sin grab_set: se puede desplazar esta ventana y cambiar ajustes en Revelo.
     window.transient(root)
 
     frame = tk.Frame(window, bg=BG, padx=18, pady=15)
@@ -113,6 +124,7 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
         'background_type': tk.StringVar(value=initial['background_type']),
         'background_image': tk.StringVar(value=initial['background_image']),
         'background_color': tk.StringVar(value=initial['background_color']),
+        'background_fill': tk.StringVar(value=initial['background_fill']),
         'text_color': tk.StringVar(value=initial['text_color']),
         'subtitle_color': tk.StringVar(value=initial['subtitle_color']),
         'title_size': tk.IntVar(value=initial['title_size']),
@@ -130,11 +142,19 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
     linked_scale = tk.BooleanVar(value=True)
     refresh_job = [None]
     preview_img = [None]
+    bg_cache = [None, None]  # (parámetros de foto/fondo, PIL.Image)
+    sample_image = [None, None]  # (archivo de origen, JPEG de vista ligera)
+    source_cache = [None, None]  # JPEG abierto en memoria, no se reabre por arrastre
+    blurred_cache = [None, None]  # fondo desenfocado independiente de la posición de foto
     # La vista previa reproduce la relación de aspecto del papel elegido;
     # no usa una proporción fija de A5 ni la miniatura de una portada antigua.
     physical_mm = paper_dimensions_mm or ((210.0, 148.0) if landscape else (148.0, 210.0))
+    if page_settings is not None:
+        physical_mm, binding = page_settings()
     page_size = (max(1, round(physical_mm[0] * 4)),
                  max(1, round(physical_mm[1] * 4)))
+    window.revelo_page_mm = physical_mm  # Útil para diagnóstico y pruebas de UI.
+    setting_traces: list[tuple[tk.Variable, str]] = []
     canvas_box = [0, 0, 1, 1]
     image_drag = [None]
     drag_text = [None]
@@ -180,6 +200,14 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
         return chip
 
     color_button('Color bajo la foto', 'background_color')
+    label('RELLENO DEL ESPACIO LIBRE')
+    fill_controls = tk.Frame(left, bg=SURFACE)
+    fill_controls.pack(fill='x')
+    for caption, value in [('Color liso', 'color'), ('Difuminado', 'blurred')]:
+        tk.Radiobutton(fill_controls, text=caption, variable=fields['background_fill'],
+                       value=value, bg=SURFACE, fg=TEXT, selectcolor=PANEL,
+                       activebackground=SURFACE, activeforeground=ACCENT,
+                       font=('Segoe UI', 9)).pack(side='left', padx=(0, 12))
     image_info = tk.StringVar(value=Path(fields['background_image'].get()).name or 'Sin fotografía')
 
     def choose_image():
@@ -261,7 +289,7 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
              highlightthickness=0,length=165).grid(row=0,column=3,sticky='ew')
     zoom_controls.columnconfigure(1,weight=1)
     zoom_controls.columnconfigure(3,weight=1)
-    tk.Label(right,text='Libre: mueve la fotografía y ajusta ancho/alto. El color elegido rellena el espacio restante.',
+    tk.Label(right,text='Libre: mueve la foto y ajusta ancho/alto. El espacio libre usa el color o difuminado elegido.',
              bg=SURFACE,fg=MUTED,font=('Segoe UI',8),wraplength=520,justify='left').pack(anchor='w',pady=(0,5))
     canvas = tk.Canvas(right, bg=PANEL, highlightthickness=0, cursor='fleur')
     canvas.pack(fill='both', expand=True)
@@ -284,6 +312,7 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
             'background_type': fields['background_type'].get(),
             'background_image': fields['background_image'].get(),
             'background_color': fields['background_color'].get(),
+            'background_fill': fields['background_fill'].get(),
             'text_color': fields['text_color'].get(),
             'subtitle_color': fields['subtitle_color'].get(),
             'title_size': fields['title_size'].get(), 'subtitle_size': fields['subtitle_size'].get(),
@@ -295,6 +324,27 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
             'image_y': fields['image_y'].get(),
             **positions,
         })
+
+    def preview_source(source_name: str) -> str:
+        """Una imagen ligera solo para la vista; nunca se guarda en el proyecto."""
+        if sample_image[0] == source_name and sample_image[1] is not None:
+            return str(sample_image[1])
+        if sample_image[1] is not None:
+            try: sample_image[1].unlink(missing_ok=True)
+            except OSError: pass
+            sample_image[:] = [None, None]
+        if not source_name:
+            return ''
+        with Image.open(source_name) as original:
+            small = ImageOps.exif_transpose(original).convert('RGB')
+            small.thumbnail((1200, 1200), Image.Resampling.LANCZOS)
+        dest = image_dir / f'_vista_editor_{uuid.uuid4().hex}.jpg'
+        try:
+            small.save(dest, 'JPEG', quality=93)
+        finally:
+            small.close()
+        sample_image[:] = [source_name, dest]
+        return str(dest)
 
     def refresh():
         refresh_job[0] = None
@@ -308,13 +358,50 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
             scale = min(ww / p_w, hh / p_h)
             iw, ih = max(80,int(p_w * scale)), max(80,int(p_h * scale))
             canvas_box[:] = ((canvas.winfo_width()-iw)//2, (canvas.winfo_height()-ih)//2, iw, ih)
-            if binding:
-                safe = printable_box((iw,ih), physical_mm, binding=True)
-            else:
-                safe = (0,0,iw,ih)
-            page = render_special_page(spec, (iw, ih), safe)
-            photo = ImageTk.PhotoImage(page)
-            page.close()
+            safe = printable_box((iw,ih), physical_mm, binding=True) if binding else (0,0,iw,ih)
+            preview_spec = dict(spec)
+            img_for_render = None
+            blurred_for_render = None
+            if spec['background_type'] == 'imagen':
+                preview_path = preview_source(spec['background_image'])
+                preview_spec['background_image'] = preview_path
+                if source_cache[0] != preview_path:
+                    if source_cache[1] is not None:
+                        source_cache[1].close()
+                    with Image.open(preview_path) as loaded:
+                        source_cache[1] = loaded.convert('RGB')
+                    source_cache[0] = preview_path
+                    if blurred_cache[1] is not None:
+                        blurred_cache[1].close()
+                        blurred_cache[:] = [None, None]
+                img_for_render = source_cache[1]
+                if spec['background_fill'] == 'blurred':
+                    blur_key = (preview_path, iw, ih)
+                    if blur_key != blurred_cache[0] or blurred_cache[1] is None:
+                        from special_pages import _blurred_page_base
+                        new_blur = _blurred_page_base(img_for_render, (iw,ih))
+                        if blurred_cache[1] is not None:
+                            blurred_cache[1].close()
+                        blurred_cache[:] = [blur_key, new_blur]
+                    blurred_for_render = blurred_cache[1]
+            bg_fields = ('background_type', 'background_color', 'background_fill',
+                         'background_image', 'image_mode', 'image_zoom_x', 'image_zoom_y',
+                         'image_x', 'image_y')
+            signature = ((iw, ih), tuple(preview_spec.get(key) for key in bg_fields))
+            if signature != bg_cache[0] or bg_cache[1] is None:
+                fresh = render_custom_background(preview_spec, (iw, ih),
+                                                  source_image=img_for_render,
+                                                  blurred_base=blurred_for_render)
+                if bg_cache[1] is not None:
+                    bg_cache[1].close()
+                bg_cache[:] = [signature, fresh]
+            # Mover el texto ya NO vuelve a abrir ni a ampliar la fotografía.
+            page = bg_cache[1].copy()
+            try:
+                draw_custom_text(page, spec, safe)
+                photo = ImageTk.PhotoImage(page)
+            finally:
+                page.close()
             preview_img[0] = photo
             canvas.delete('all')
             ox,oy,_,_ = canvas_box
@@ -322,7 +409,6 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
             x0,y0,x1,y1 = safe
             canvas.create_rectangle(ox+x0,oy+y0,ox+x1,oy+y1,
                                     outline=ACCENT, dash=(5,5), width=1)
-            # Etiqueta discreta del elemento seleccionado fuera del diseño.
             label_key = focused.get()
             active_label = {'title':'TÍTULO','subtitle':'SUBTÍTULO','image':'FOTOGRAFÍA'}[label_key]
             canvas.create_text(ox+9,oy+12,text=active_label,fill=ACCENT,
@@ -333,10 +419,24 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
                                fill=MUTED,anchor='w')
 
     def schedule(*_):
-        if refresh_job[0] is not None:
-            try:window.after_cancel(refresh_job[0])
-            except tk.TclError:pass
-        refresh_job[0] = window.after(130, refresh)
+        # Un único fotograma en cola: no esperar 130 ms tras el ÚLTIMO evento.
+        # Los arrastres rápidos reciben respuesta continua sin saturar Tk.
+        if refresh_job[0] is None and window.winfo_exists():
+            refresh_job[0] = window.after(PREVIEW_FRAME_MS, refresh)
+
+    def sync_page_settings(*_):
+        nonlocal physical_mm, page_size, binding
+        if page_settings is None or not window.winfo_exists():
+            return
+        new_mm, new_binding = page_settings()
+        if new_mm == physical_mm and new_binding == binding:
+            return
+        physical_mm = tuple(new_mm)
+        binding = bool(new_binding)
+        page_size = (max(1, round(physical_mm[0]*4)),
+                     max(1, round(physical_mm[1]*4)))
+        window.revelo_page_mm = physical_mm
+        schedule()
 
     def on_drag(event):
         key = focused.get()
@@ -368,6 +468,7 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
 
     def save():
         try:
+            sync_page_settings()
             spec=draft()
             # Valida también la foto del fondo antes de confirmar.
             test=render_special_page(spec, (round(physical_mm[0]*2), round(physical_mm[1]*2)))
@@ -377,9 +478,37 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
             messagebox.showwarning('Revelo · Página personalizada', str(exc), parent=window)
             return
         window.destroy()
+
+    def editor_destroyed(event):
+        if event.widget is not window:
+            return
+        for var, trace in setting_traces:
+            try: var.trace_remove('write', trace)
+            except tk.TclError: pass
+        if refresh_job[0] is not None:
+            try:window.after_cancel(refresh_job[0])
+            except tk.TclError:pass
+            refresh_job[0] = None
+        if bg_cache[1] is not None:
+            bg_cache[1].close()
+            bg_cache[1] = None
+        if source_cache[1] is not None:
+            source_cache[1].close()
+            source_cache[1] = None
+        if blurred_cache[1] is not None:
+            blurred_cache[1].close()
+            blurred_cache[1] = None
+        if sample_image[1] is not None:
+            try: sample_image[1].unlink(missing_ok=True)
+            except OSError: pass
+
+    window.bind('<Destroy>', editor_destroyed, add='+')
+    for var in settings_vars:
+        setting_traces.append((var, var.trace_add('write', sync_page_settings)))
+    tk.Label(buttons, text='Puedes mover esta ventana y cambiar el papel en Revelo.',
+             bg=BG, fg=MUTED, font=('Segoe UI', 9)).pack(side='left')
     tk.Button(buttons, text='Guardar página personalizada', command=save,
               bg=ACCENT, fg=BG, relief='flat', font=('Segoe UI', 10, 'bold'),
               padx=20, pady=9).pack(side='right', padx=(0,9))
-    window.grab_set()
-    window.after(300, refresh)
+    window.after(30, refresh)
     return window

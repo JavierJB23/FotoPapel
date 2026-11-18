@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
-from PIL import Image, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageDraw, ImageFont, ImageOps, ImageFilter
 
 KINDS = ("Portada", "Separador", "Página en blanco")
 THEMES = {
@@ -57,8 +57,12 @@ def validate_special_spec(spec: dict) -> dict:
     if bgtype == "imagen" and (not bg_image or Path(bg_image).suffix.lower() not in
                                (".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff", ".heic", ".heif")):
         raise ValueError("Elige una foto de fondo válida")
+    fill_mode = spec.get('background_fill', 'color')
+    if fill_mode not in ('color', 'blurred'):
+        raise ValueError('El tipo de relleno del fondo no es válido')
     out = {"kind": kind, "theme": theme, "title": title, "subtitle": subtitle,
            "background_type": bgtype, "background_image": bg_image,
+           "background_fill": fill_mode,
            "background_color": _hex(spec.get("background_color", "#F6EBDC"), "fondo"),
            "text_color": _hex(spec.get("text_color", "#1B2D43"), "título"),
            "subtitle_color": _hex(spec.get("subtitle_color", "#334C63"), "subtítulo")}
@@ -107,6 +111,27 @@ def validate_special_spec(spec: dict) -> dict:
     return out
 
 
+def _blurred_page_base(source: Image.Image, size: tuple[int, int]) -> Image.Image:
+    """Cubre la hoja con un desenfoque de la foto, sin red ni IA.
+
+    Desenfoca sobre una copia pequeña para evitar crear filtros gigantes
+    al exportar portadas en A3/A4 a 600 PPP.
+    """
+    w, h = size
+    factor = min(1.0, 1300 / max(w, h))
+    preview_size = (max(1, round(w*factor)), max(1, round(h*factor)))
+    scaled = ImageOps.fit(source, preview_size, method=Image.Resampling.LANCZOS)
+    try:
+        blurred = scaled.filter(ImageFilter.GaussianBlur(max(6, round(max(preview_size)*.035))))
+    finally:
+        scaled.close()
+    if preview_size != size:
+        result = blurred.resize(size, Image.Resampling.BICUBIC)
+        blurred.close()
+        return result
+    return blurred
+
+
 def _draw_custom_background(canvas: Image.Image, source: Image.Image, spec: dict) -> None:
     """Pega foto sobre el color de base, recortando *antes* de escalar a 600 PPP.
 
@@ -138,24 +163,69 @@ def _draw_custom_background(canvas: Image.Image, source: Image.Image, spec: dict
     region = source.crop(crop)
     try:
         visible = region.resize((right-left,bottom-top),Image.Resampling.LANCZOS)
-        canvas.paste(visible,(left,top))
-        visible.close()
+        try:
+            if spec.get('background_fill', 'color') == 'blurred':
+                # El núcleo queda 100 % nítido. Solo se funden los bordes
+                # del rectángulo visible con el fondo derivado de la foto.
+                edge = max(3, round(min(w,h) * .048))
+                mask = Image.new('L', visible.size, 255)
+                alpha = Image.new('L', visible.size, 0)
+                mdraw = ImageDraw.Draw(alpha)
+                # Solapamos ligeramente la foto con el fondo antes de suavizar.
+                inset = min(edge, max(0, (visible.width - 1)//2), max(0, (visible.height - 1)//2))
+                if inset:
+                    mdraw.rectangle((inset, inset, visible.width-inset-1,
+                                     visible.height-inset-1), fill=255)
+                    smooth = alpha.filter(ImageFilter.GaussianBlur(max(2, round(edge*.9))))
+                    canvas.paste(visible, (left,top), smooth)
+                    smooth.close()
+                else:
+                    canvas.paste(visible, (left,top), mask)
+                alpha.close()
+                mask.close()
+            else:
+                canvas.paste(visible,(left,top))
+        finally:
+            visible.close()
     finally:
         region.close()
 
 
-def render_custom_page(spec: dict, size: tuple[int, int],
-                       safe_box: tuple[int,int,int,int] | None = None) -> Image.Image:
-    """Fondo a color/foto y títulos ajustables, dibujados en posiciones relativas."""
+def render_custom_background(spec: dict, size: tuple[int, int], *,
+                             source_image: Image.Image | None = None,
+                             blurred_base: Image.Image | None = None) -> Image.Image:
+    """Compone el fondo. En el editor admite cachés para un arrastre fluido.
+
+    Las exportaciones no utilizan cachés del editor: siempre abren los
+    originales a resolución completa y producen el mismo resultado visual.
+    """
     w, h = map(int, size)
     canvas = Image.new("RGB", (w, h), spec["background_color"])
     if spec["background_type"] == "imagen":
-        with Image.open(Path(spec['background_image'])) as opened:
-            image = ImageOps.exif_transpose(opened).convert('RGB')
+        opened = None
+        if source_image is None:
+            with Image.open(Path(spec['background_image'])) as infile:
+                opened = ImageOps.exif_transpose(infile).convert('RGB')
+            image = opened
+        else:
+            image = source_image
         try:
+            if spec.get('background_fill', 'color') == 'blurred':
+                base = (blurred_base.copy() if blurred_base is not None
+                        and blurred_base.size == (w, h) else _blurred_page_base(image, (w, h)))
+                canvas.close()
+                canvas = base
             _draw_custom_background(canvas, image, spec)
         finally:
-            image.close()
+            if opened is not None:
+                opened.close()
+    return canvas
+
+
+def draw_custom_text(canvas: Image.Image, spec: dict,
+                     safe_box: tuple[int,int,int,int] | None = None) -> Image.Image:
+    """Añade el texto a un fondo ya preparado; permite arrastrar sin reescalar la foto."""
+    w, h = canvas.size
     if spec["kind"] == "Página en blanco":
         return canvas
     if safe_box is None:
@@ -189,6 +259,14 @@ def render_custom_page(spec: dict, size: tuple[int, int],
                       fill=spec["text_color"] if element == "title" else spec["subtitle_color"], font=font)
             cursor += height + gap
     return canvas
+
+
+
+def render_custom_page(spec: dict, size: tuple[int, int],
+                       safe_box: tuple[int,int,int,int] | None = None) -> Image.Image:
+    """Fondo a color/foto y títulos ajustables, dibujados en posiciones relativas."""
+    canvas = render_custom_background(spec, size)
+    return draw_custom_text(canvas, spec, safe_box)
 
 
 def _font(size: int, *, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:

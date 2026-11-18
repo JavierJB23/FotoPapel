@@ -422,9 +422,17 @@ class ReveloApp:
             paper_w_mm, paper_h_mm = paper_h_mm, paper_w_mm
         def commit(custom_spec):
             self._commit_special_page(custom_spec, path)
+        def current_page_settings():
+            width_mm, height_mm = PAPER_SIZES[self.paper.get()]
+            if self._special_landscape(path):
+                width_mm, height_mm = height_mm, width_mm
+            return ((width_mm, height_mm), self.binding.get() == 'Sí')
+
         edit_custom_page(self.root, initial=spec, image_dir=Path(self.special_temp.name),
                          landscape=landscape, binding=self.binding.get() == 'Sí',
                          paper_dimensions_mm=(paper_w_mm, paper_h_mm),
+                         page_settings=current_page_settings,
+                         settings_vars=(self.paper, self.orientation, self.binding),
                          on_save=commit)
 
     def special_page_dialog(self, path: Path | None = None):
