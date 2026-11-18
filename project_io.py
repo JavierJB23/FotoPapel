@@ -67,11 +67,30 @@ def save_project(
             raise ProjectError("El proyecto supera el límite de tamaño permitido")
         arcname = f"assets/{index + 1:05d}{path.suffix.lower()}"
         names[path] = index
+        custom_spec = validate_special_spec(special_pages[path]) if path in special_pages else None
+        background_file = None
+        background_arc = None
+        background_size = None
+        background_sha256 = None
+        if custom_spec and custom_spec.get('background_type') == 'imagen':
+            background_file = Path(custom_spec['background_image'])
+            if not background_file.is_file():
+                raise ProjectError('No se encuentra el fondo personalizado de una página')
+            background_size = background_file.stat().st_size
+            total_bytes += background_size
+            if background_size > MAX_SINGLE_FILE or total_bytes > MAX_TOTAL_BYTES:
+                raise ProjectError('Una fotografía de fondo supera el límite permitido')
+            background_arc = f'backgrounds/{index+1:05d}{background_file.suffix.lower()}'
+            background_sha256 = _digest_file(background_file)
+            custom_spec['background_image'] = background_arc
         records.append({
             "asset": arcname,
             "label": str(labels.get(path, path.name))[:300],
             "kind": "special_page" if path in special_pages else ("pdf_page" if path in pdf_origins else "image"),
-            "special": validate_special_spec(special_pages[path]) if path in special_pages else None,
+            "special": custom_spec,
+            "background_asset": background_arc,
+            "background_size": background_size,
+            "background_sha256": background_sha256,
             "pdf_origin": str(pdf_origins[path]) if path in pdf_origins else None,
             "size": size,
             "sha256": _digest_file(path),
@@ -90,6 +109,9 @@ def save_project(
         with ZipFile(tempname, 'w', ZIP_DEFLATED, compresslevel=3, allowZip64=True) as zipout:
             for idx, (path, record) in enumerate(zip(paths, records), 1):
                 zipout.write(path, record['asset'])
+                if record['background_asset']:
+                    background = Path(special_pages[path]['background_image'])
+                    zipout.write(background, record['background_asset'])
                 if progress:
                     progress(idx, len(paths))
             zipout.writestr('manifest.json', json.dumps(manifest, ensure_ascii=False, indent=2))
@@ -109,7 +131,7 @@ def load_project(source: Path, folder: Path, progress: Progress | None = None) -
     try:
         with ZipFile(source, 'r') as archive:
             infos = archive.infolist()
-            if len(infos) > MAX_ITEMS + 1 or not any(i.filename == 'manifest.json' for i in infos):
+            if len(infos) > MAX_ITEMS * 2 + 1 or not any(i.filename == 'manifest.json' for i in infos):
                 raise ProjectError("Este archivo no es un proyecto de Revelo válido")
             if archive.getinfo('manifest.json').file_size > 2 * 1024 * 1024:
                 raise ProjectError("El índice del proyecto es demasiado grande")
@@ -125,7 +147,8 @@ def load_project(source: Path, folder: Path, progress: Progress | None = None) -
                     or not isinstance(settings, dict)):
                 raise ProjectError("El índice del proyecto contiene datos no válidos")
             entries = {info.filename: info for info in infos}
-            if len(entries) != len(infos) or len(infos) != len(records) + 1:
+            count_bg = sum(bool(r.get('background_asset')) for r in records if isinstance(r, dict))
+            if len(entries) != len(infos) or len(infos) != len(records) + count_bg + 1:
                 raise ProjectError("El proyecto tiene archivos duplicados o inesperados")
             total = 0
             loaded = []
@@ -173,9 +196,41 @@ def load_project(source: Path, folder: Path, progress: Progress | None = None) -
                 labels[path] = label
                 if kind == 'special_page':
                     try:
-                        special_pages[path] = validate_special_spec(record.get('special'))
-                    except ValueError as exc:
+                        spec = dict(record.get('special'))
+                        bgkey = record.get('background_asset')
+                        if spec.get('background_type') == 'imagen':
+                            if (not isinstance(bgkey, str) or
+                                    not re.fullmatch(r'backgrounds/[0-9]{5}\.(jpg|jpeg|png|webp|bmp|tif|tiff|heic|heif)', bgkey)
+                                    or bgkey not in entries or entries[bgkey].is_dir()
+                                    or bgkey != spec.get('background_image')):
+                                raise ProjectError('Imagen de fondo de proyecto no válida')
+                            info_bg = entries[bgkey]
+                            bgsize = record.get('background_size')
+                            sha_bg = record.get('background_sha256')
+                            if (not isinstance(bgsize, int) or bgsize != info_bg.file_size or
+                                    bgsize > MAX_SINGLE_FILE or
+                                    not isinstance(sha_bg, str) or not re.fullmatch(r'[0-9a-f]{64}', sha_bg)):
+                                raise ProjectError('Tamaño o huella del fondo inválidos')
+                            total += bgsize
+                            if total > MAX_TOTAL_BYTES:
+                                raise ProjectError('El proyecto supera el tamaño permitido')
+                            bgpath = folder / f'fondo_{idx:05d}{Path(bgkey).suffix}'
+                            hasher_bg = hashlib.sha256()
+                            with archive.open(info_bg) as inp, bgpath.open('wb') as out:
+                                for chunk in iter(lambda: inp.read(1024*1024), b''):
+                                    hasher_bg.update(chunk)
+                                    out.write(chunk)
+                            if hasher_bg.hexdigest() != sha_bg:
+                                raise ProjectError('La imagen del fondo está dañada')
+                            source_dimensions(bgpath)
+                            spec['background_image'] = str(bgpath)
+                        elif bgkey is not None:
+                            raise ProjectError('Fondo inesperado en el proyecto')
+                        special_pages[path] = validate_special_spec(spec)
+                    except (ValueError, TypeError, OSError) as exc:
                         raise ProjectError('Página especial del proyecto no válida') from exc
+                elif record.get('background_asset') is not None:
+                    raise ProjectError('Fondo de página inesperado')
                 if kind == 'pdf_page':
                     origin = record.get('pdf_origin')
                     if not isinstance(origin, str) or len(origin) > 1024:

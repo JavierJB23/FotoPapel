@@ -1,67 +1,73 @@
-REVELO v1.5 — PORTADAS, SEPARADORES Y PÁGINAS EN BLANCO
-======================================================
-Versión candidata. Conserva Revelo v1.4.3 STABLE como respaldo.
+REVELO v1.5.1 — ORDENACIÓN VISUAL Y PÁGINAS PERSONALIZADAS
+============================================================
+Esta actualización parte de Revelo v1.5. Conserva una copia de tu versión
+STABLE v1.4.3 y del ejecutable v1.5 antes de actualizar.
 
-QUÉ CAMBIA
-----------
-El botón «+ Página» permite añadir:
- - Portada con título y subtítulo opcional.
- - Separador con título de capítulo (por ejemplo, «Postres»).
- - Página en blanco (también puede llevar fondo crema, azul noche o aguamarina).
+NOVEDADES
+---------
+1. Panel "Orden del contenido" más ancho; miniaturas y filas mucho más grandes.
+2. Selección de biblioteca y selección de orden totalmente independientes.
+   - Un clic en la biblioteca selecciona, pero NO desplaza nada.
+   - Un clic en una fila de orden marca esa fila en verde aguamarina.
+   - Para recolocar: arrastra al número deseado o utiliza las flechas ↑ ↓.
+3. La portada ocupa siempre el primer puesto y no puede desplazarse.
+   Solo puede existir una portada por composición.
+4. "Personalizar" en la selección de color/diseño de "+ Página".
+   - Fondo del color exacto que elijas o una fotografía propia.
+   - Título y subtítulo opcionales, editables y con cualquier color.
+   - Tamaño de letra ajustable por separado.
+   - Desplaza los textos arrastrándolos por la hoja; usa "Mover título" o
+     "Mover subtítulo" para elegir cuál quieres recolocar.
+   - Las páginas prediseñadas (Crema, Blanco, Azul noche y Aguamarina)
+     conservan su edición sencilla sin cambio manual de posiciones.
+5. Los archivos .revelo y los PDF reversibles incluyen las fotos de fondo
+   personalizadas, de modo que puedan recuperarse sin el original.
+6. Siguen operativos el QR, Word/PDF, los 4 encajes y los márgenes.
 
-Puedes elegir colores Blanco, Crema, Azul noche y Aguamarina.
-Pulsa «Editar página» debajo de una miniatura para cambiar sus textos y colores.
-
-Las páginas especiales ocupan SIEMPRE una hoja completa, aunque selecciones
-2, 4, 6 o 9 fotografías por hoja. Se pueden mover con flechas o arrastrando,
-como las imágenes. Los márgenes de encuadernación se siguen respetando.
-
-El título se compone de nuevo al tamaño de papel seleccionado antes de exportar:
-A4, A5, A6, 10x15 y el resto de formatos admitidos por Revelo.
-
-GUARDAR Y RECUPERAR
-------------------
-Los proyectos .revelo conservan textos, estilos, posiciones, fotos y páginas PDF.
-Los proyectos hechos con v1.4.3 también se pueden abrir.
-
-Los PDF creados por Revelo contienen el adjunto reversible de originales y
-las características de las páginas especiales. Al importarlos de nuevo, Revelo
-recupera los títulos como páginas independientes, además de las fotografías.
-
-CÓMO ACTUALIZAR TU EJECUTABLE WINDOWS
+CÓMO CREAR UNA PORTADA PERSONALIZADA
 ------------------------------------
-1. Conserva una copia del anterior Revelo.exe v1.4.3 STABLE.
-2. Descomprime Revelo_v1_5_ACTUALIZACION.zip.
-3. En tu repositorio de GitHub «JavierJB23/FotoPapel», pulsa Add file > Upload files.
-4. Sube el contenido descomprimido del ZIP, no el ZIP en sí. Los archivos son:
-     main.py
-     processor.py
-     project_io.py
-     pdf_sources.py
-     special_pages.py  (NUEVO)
-     README_PRIMERO.txt
-     tests/test_special_pages.py  (NUEVO; debe estar dentro de tests)
-5. Pulsa Commit changes.
-6. En Actions se generará el nuevo Revelo.exe automáticamente.
-7. Cuando la compilación esté verde, abre el trabajo y descarga
-   el archivo Revelo-Windows-EXE. Descomprímelo y abre Revelo.exe.
+1. Pulsa "+ Página".
+2. Escoge "Portada" o "Separador".
+3. En "COLOR / DISEÑO", selecciona "Personalizar" y pulsa "Guardar página".
+4. En la nueva ventana elige "Color liso" o "Fotografía". Para subir una imagen,
+   pulsa "Elegir foto...". Es posible no poner título ni subtítulo.
+5. Escoge el texto que quieras mover (título o subtítulo), pulsa sobre la hoja
+   y arrástralo hasta la posición deseada.
+6. Cambia los tamaños con los deslizadores y guarda.
+La portada quedará anclada en la posición 1 de la lista derecha.
 
-No hay que instalar Python en Windows ni modificar la configuración de Actions:
-las dependencias actuales de la v1.4.3 siguen siendo suficientes.
+CÓMO ACTUALIZAR EN TU GITHUB
+---------------------------
+1. Descomprime Revelo_v1_5_1_ACTUALIZACION.zip.
+2. Entra en https://github.com/JavierJB23/FotoPapel/upload/main
+3. Sube el contenido del ZIP DESCOMPRIMIDO a la raíz del repositorio:
+   - main.py                      (reemplazar)
+   - special_pages.py             (reemplazar)
+   - project_io.py                (reemplazar)
+   - pdf_sources.py               (reemplazar)
+   - custom_editor.py             (NUEVO)
+   - ordering_rules.py            (NUEVO)
+   - README_PRIMERO.txt           (reemplazar)
+   - tests/test_custom_editor_order.py (NUEVO, dentro de tests)
+4. Pulsa "Commit changes". No hace falta tocar .github ni requirements.txt.
+5. En la pestaña Actions, descarga "Revelo-Windows-EXE" cuando termine
+   con la marca verde y extrae Revelo.exe.
+No necesitas instalar Python ni ningún otro entorno en el ordenador.
 
 PRUEBA RECOMENDADA
------------------
-1. Abre Revelo, pon «Fotos por hoja: 4» y carga cuatro fotos.
-2. Pulsa «+ Página» y crea un separador «Postres» en fondo Crema.
-3. Añade otras cuatro fotos. Ordena la lista para que el separador quede en medio.
-4. En Previsualización deberían salir TRES hojas (4 fotos, separador, 4 fotos).
-5. Exporta a PDF. Guarda además un archivo .revelo.
-6. Cierra y abre el proyecto guardado. Comprueba los títulos, colores y orden.
+------------------
+- Carga 10 fotos. Selecciona una miniatura izquierda y luego otra derecha.
+  Verifica que ninguna se mueve sola y se ilumina la posición seleccionada.
+- Añade una portada y prueba las flechas y el arrastre: siempre debe ser la 1.
+- Crea una portada con foto propia, título movido y subtítulo opcional.
+  Guarda un .revelo, cierra el programa y abre ese proyecto.
+- Exporta a PDF, impórtalo y comprueba que puedes editar de nuevo la portada.
 
 NOTAS
 -----
-La «Página en blanco» se exporta como hoja completa y puede usarse para ajustar
-la paginación de una encuadernación.
-El contenido nuevo se crea y procesa en tu ordenador. No usa una nube.
-Los PDF que compartas pueden contener sus imágenes originales como adjuntos;
-comprueba el documento antes de distribuirlo a otras personas.
+Las páginas personalizadas se renderizan de nuevo para cada tamaño comercial.
+Una imagen de fondo se escala para cubrir el papel, pudiendo recortarse en sus
+bordes. El texto permanece dentro del área segura de encuadernación.
+La foto de fondo se conserva en el proyecto o PDF; esto puede aumentar su tamaño.
+Los PDF exportados que compartas pueden contener las fotos originales y fondos
+adjuntos. El programa funciona localmente, sin enviar fotos a una nube.

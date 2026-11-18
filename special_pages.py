@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 KINDS = ("Portada", "Separador", "Página en blanco")
 THEMES = {
@@ -18,27 +18,127 @@ THEMES = {
 }
 
 
+CUSTOM_THEME = "Personalizar"
+
+
+def _hex(value: str, name: str) -> str:
+    if not isinstance(value, str) or not re.fullmatch(r"#[0-9a-fA-F]{6}", value):
+        raise ValueError(f"El color de {name} debe ser un valor hexadecimal")
+    return value.upper()
+
+
 def validate_special_spec(spec: dict) -> dict:
-    """Crea una especificación limpia y validada, nunca ejecuta datos del proyecto."""
+    """Valida páginas antiguas y diseños personalizados sin ejecutar datos externos."""
     if not isinstance(spec, dict):
         raise ValueError("La página especial no tiene un formato válido")
     kind = spec.get("kind", "Separador")
     theme = spec.get("theme", "Crema")
     title = spec.get("title", "")
     subtitle = spec.get("subtitle", "")
-    if kind not in KINDS or theme not in THEMES:
+    if kind not in KINDS or theme not in (*THEMES, CUSTOM_THEME):
         raise ValueError("Tipo o color de página especial no admitido")
     if not isinstance(title, str) or not isinstance(subtitle, str):
         raise ValueError("El título y subtítulo deben ser texto")
-    title = title.strip()
-    subtitle = subtitle.strip()
-    if len(title) > 120 or len(subtitle) > 180 or re.search(r"[\x00-\x08\x0b-\x1f]", title+subtitle):
+    title, subtitle = title.strip(), subtitle.strip()
+    if len(title) > 120 or len(subtitle) > 180 or re.search(r"[\x00-\x08\x0b-\x1f]", title + subtitle):
         raise ValueError("El título o subtítulo contiene caracteres no admitidos")
+    if theme != CUSTOM_THEME:
+        if kind == "Página en blanco":
+            title, subtitle = "", ""
+        elif not title:
+            raise ValueError("Escribe un título para esta portada o separador")
+        return {"kind": kind, "theme": theme, "title": title, "subtitle": subtitle}
+    bgtype = spec.get("background_type", "color")
+    if bgtype not in ("color", "imagen"):
+        raise ValueError("Tipo de fondo personalizado desconocido")
+    bg_image = spec.get("background_image", "")
+    if not isinstance(bg_image, str) or len(bg_image) > 2048:
+        raise ValueError("Ruta de imagen de fondo inválida")
+    if bgtype == "imagen" and (not bg_image or Path(bg_image).suffix.lower() not in
+                               (".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff", ".heic", ".heif")):
+        raise ValueError("Elige una foto de fondo válida")
+    out = {"kind": kind, "theme": theme, "title": title, "subtitle": subtitle,
+           "background_type": bgtype, "background_image": bg_image,
+           "background_color": _hex(spec.get("background_color", "#F6EBDC"), "fondo"),
+           "text_color": _hex(spec.get("text_color", "#1B2D43"), "título"),
+           "subtitle_color": _hex(spec.get("subtitle_color", "#334C63"), "subtítulo")}
+    for key, default, lower, upper in (
+        ("title_size", 12, 3, 24), ("subtitle_size", 6, 2, 18),
+    ):
+        value = spec.get(key, default)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not lower <= value <= upper:
+            raise ValueError(f"Valor de {key} inválido")
+        out[key] = int(value)
+    for key, default in (
+        ("title_x", .5), ("title_y", .42),
+        ("subtitle_x", .5), ("subtitle_y", .58),
+    ):
+        value = spec.get(key, default)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 1:
+            raise ValueError(f"Posición de {key} inválida")
+        out[key] = round(float(value), 5)
+    for key, default in (("show_title", True), ("show_subtitle", True)):
+        value = spec.get(key, default)
+        if not isinstance(value, bool):
+            raise ValueError(f"Campo {key} inválido")
+        out[key] = value
     if kind == "Página en blanco":
-        title, subtitle = "", ""
-    elif not title:
-        raise ValueError("Escribe un título para esta portada o separador")
-    return {"kind": kind, "theme": theme, "title": title, "subtitle": subtitle}
+        out.update(title="", subtitle="", show_title=False, show_subtitle=False)
+    if not out["show_title"]:
+        out["title"] = ""
+    if not out["show_subtitle"]:
+        out["subtitle"] = ""
+    return out
+
+
+def render_custom_page(spec: dict, size: tuple[int, int],
+                       safe_box: tuple[int,int,int,int] | None = None) -> Image.Image:
+    """Fondo a color/foto y títulos ajustables, dibujados en posiciones relativas."""
+    w, h = map(int, size)
+    canvas = Image.new("RGB", (w, h), spec["background_color"])
+    if spec["background_type"] == "imagen":
+        imgpath = Path(spec["background_image"])
+        with Image.open(imgpath) as image:
+            img = ImageOps.exif_transpose(image).convert("RGB")
+            try:
+                filled = ImageOps.fit(img, (w, h), method=Image.Resampling.LANCZOS)
+                canvas.paste(filled, (0, 0))
+                filled.close()
+            finally:
+                img.close()
+    if spec["kind"] == "Página en blanco":
+        return canvas
+    if safe_box is None:
+        safe_box = (int(w*.075), int(h*.075), int(w*.925), int(h*.925))
+    x0, y0, x1, y1 = safe_box
+    # Posiciones relativas al rectángulo seguro, dejando margen de seguridad.
+    margin = max(4, round(min(w, h)*.015))
+    x0, y0, x1, y1 = x0 + margin, y0 + margin, x1 - margin, y1 - margin
+    cw, ch = max(1, x1 - x0), max(1, y1 - y0)
+    draw = ImageDraw.Draw(canvas)
+    for element in ("title", "subtitle"):
+        if not spec.get("show_"+element) or not spec.get(element):
+            continue
+        size_px = max(9, int(min(cw, ch) * spec[element+"_size"] / 100))
+        font = _font(size_px, bold=element == "title")
+        lines = _text_lines(draw, spec[element], font, int(cw*.96))
+        if not lines:
+            continue
+        gap = max(2, int(size_px*.28))
+        heights = [draw.textbbox((0, 0), line, font=font)[3] - draw.textbbox((0, 0), line, font=font)[1] for line in lines]
+        total = sum(heights) + gap * (len(lines)-1)
+        # Alineación central y protección de textos cerca de los márgenes.
+        cy = y0 + spec[element+"_y"]*ch
+        cursor = min(max(cy - total/2, y0), max(y0, y1-total))
+        cx = x0 + spec[element+"_x"]*cw
+        for line, height in zip(lines, heights):
+            box = draw.textbbox((0, 0), line, font=font)
+            width = box[2] - box[0]
+            px = min(max(cx - width / 2, x0), x1 - width)
+            draw.text((px - box[0], cursor - box[1]), line,
+                      fill=spec["text_color"] if element == "title" else spec["subtitle_color"], font=font)
+            cursor += height + gap
+    return canvas
 
 
 def _font(size: int, *, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
@@ -93,6 +193,8 @@ def render_special_page(spec: dict, size: tuple[int, int], safe_box: tuple[int,i
     w, h = map(int, size)
     if w < 50 or h < 50 or w > 20000 or h > 20000:
         raise ValueError("Tamaño de portada no admitido")
+    if spec["theme"] == CUSTOM_THEME:
+        return render_custom_page(spec, size, safe_box=safe_box)
     palette = THEMES[spec["theme"]]
     canvas = Image.new("RGB", (w, h), palette["background"])
     if spec["kind"] == "Página en blanco":

@@ -23,7 +23,9 @@ from pdf_import import import_pdf_pages, matched_paper
 from pdf_sources import recover_sources
 from mobile_import import PhoneTransferServer
 from project_io import save_project, load_project, ProjectError
-from special_pages import KINDS, THEMES, validate_special_spec, save_special_thumbnail
+from special_pages import KINDS, THEMES, CUSTOM_THEME, validate_special_spec, save_special_thumbnail
+from ordering_rules import cover_path, anchored_order, move_item
+from custom_editor import edit_custom_page
 import qrcode
 
 APP_NAME = "Revelo"
@@ -80,7 +82,7 @@ class ReveloApp:
         self.root = root
         self.root.title("Revelo · Fotos y PDF listos para imprimir")
         self.root.geometry("1270x845")
-        self.root.minsize(940, 650)
+        self.root.minsize(1100, 690)
         self.root.configure(bg=BG)
         self.paths: list[Path] = []
         self.path_labels: dict[Path, str] = {}
@@ -102,7 +104,9 @@ class ReveloApp:
         self.thumbnails: dict[Path, ImageTk.PhotoImage] = {}
         self.thumbnails_small: dict[Path, ImageTk.PhotoImage] = {}
         self.details: dict[Path, tuple[int, int]] = {}
-        self.selected: Path | None = None
+        self.selected: Path | None = None  # selección de biblioteca
+        self.order_selected: Path | None = None  # independiente, selección en lista ordenada
+        self.drag_origin: str | None = None
         self.drag_source: Path | None = None
         self.drag_begin: tuple[int, int] | None = None
         self.drag_ghost: tk.Toplevel | None = None
@@ -258,8 +262,8 @@ class ReveloApp:
         content = tk.Frame(self.root, bg=BG, padx=24, pady=10)
         content.pack(fill="both", expand=True)
         content.grid_rowconfigure(0, weight=1)
-        content.grid_columnconfigure(0, weight=6, uniform="grid")
-        content.grid_columnconfigure(1, weight=5, uniform="grid")
+        content.grid_columnconfigure(0, weight=5, uniform="grid")
+        content.grid_columnconfigure(1, weight=6, uniform="grid")
         left_panel = self._panel(content)
         left_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
         right_panel = self._panel(content)
@@ -313,7 +317,7 @@ class ReveloApp:
                                            textvariable=self.per_sheet, width=3,
                                            state="readonly", style="Custom.TCombobox")
         self.per_sheet_combo.pack(side="left")
-        self._label(hint, "Agrupación consecutiva",
+        self._label(hint, "Clic: seleccionar · Arrastra o usa ↑ ↓",
                     size=9, color="#C1F3E5").pack(side="left", padx=(12, 0))
         self.order_area = ScrollingArea(right_panel)
         self.order_area.pack(fill="both", expand=True, padx=9, pady=9)
@@ -362,108 +366,126 @@ class ReveloApp:
     def _groups(self) -> list[tuple[Path, ...]]:
         return page_groups(self.pages, int(self.per_sheet.get()), self.special_pages)
 
+    def _commit_special_page(self, spec: dict, path: Path | None) -> None:
+        """Guarda portada/separador desde el modo clásico o personalizar."""
+        spec = validate_special_spec(spec)
+        if spec['kind'] == 'Portada' and cover_path(self.special_pages, path) is not None:
+            raise ValueError('Ya tienes una portada. Edítala o elimínala antes de crear otra.')
+        new = path is None
+        candidate = (Path(self.special_temp.name) / f'pagina_{uuid.uuid4().hex}.png') if new else path
+        landscape = self.orientation.get() == 'Horizontal'
+        if self.orientation.get() == 'Automática' and self.pages and new:
+            sw, sh = self.details.get(self.pages[0], (1, 2))
+            landscape = sw > sh
+        if not new:
+            sw, sh = self.details.get(path, (1, 2))
+            landscape = sw > sh
+        save_special_thumbnail(candidate, spec, landscape=landscape)
+        self.thumbnails.pop(candidate, None)
+        self.thumbnails_small.pop(candidate, None)
+        self._thumbnail(candidate)
+        self.special_pages[candidate] = spec
+        self.path_labels[candidate] = ('Página en blanco' if spec['kind'] == 'Página en blanco'
+                                       else f"{spec['kind']}: {spec['title'] or 'Sin título'}")
+        self.details[candidate] = source_dimensions(candidate)
+        if new:
+            self.paths.append(candidate)
+            self.pages.append(candidate)
+        self.pages = anchored_order(self.pages, self.special_pages)
+        self.selected = candidate
+        self.render_library()
+        self.render_order()
+        self.feedback.set('Página guardada. La portada siempre ocupa la primera posición.')
+
+    def _custom_page_dialog(self, path: Path | None = None, *, initial: dict | None = None) -> None:
+        if self.is_busy:
+            return
+        spec = dict(initial or self.special_pages.get(path) or {})
+        landscape = self.orientation.get() == 'Horizontal'
+        if path in self.details:
+            w, h = self.details[path]
+            landscape = w > h
+        elif self.orientation.get() == 'Automática' and self.pages:
+            w, h = self.details.get(self.pages[0], (1,2))
+            landscape = w > h
+        def commit(custom_spec):
+            self._commit_special_page(custom_spec, path)
+        edit_custom_page(self.root, initial=spec, image_dir=Path(self.special_temp.name),
+                         landscape=landscape, binding=self.binding.get() == 'Sí',
+                         on_save=commit)
+
     def special_page_dialog(self, path: Path | None = None):
-        """Crea o edita portadas, separadores y hojas vacías."""
+        """Los temas prediseñados no cambian posición/tamaño; Personalizar abre editor."""
         if self.is_busy:
             return
         old = self.special_pages.get(path) if path is not None else None
-        kind = tk.StringVar(value=old["kind"] if old else "Separador")
-        title = tk.StringVar(value=old["title"] if old else "")
-        subtitle = tk.StringVar(value=old["subtitle"] if old else "")
-        theme = tk.StringVar(value=old["theme"] if old else "Crema")
+        if old is not None and old.get('theme') == CUSTOM_THEME:
+            self._custom_page_dialog(path)
+            return
+        kind = tk.StringVar(value=old['kind'] if old else 'Separador')
+        title = tk.StringVar(value=old['title'] if old else '')
+        subtitle = tk.StringVar(value=old['subtitle'] if old else '')
+        theme = tk.StringVar(value=old['theme'] if old else 'Crema')
         window = tk.Toplevel(self.root)
-        window.title("Revelo · " + ("Editar página" if old else "Añadir página"))
+        window.title('Revelo · ' + ('Editar página' if old else 'Añadir página'))
         self.root.update_idletasks()
-        win_w, win_h = 510, 540
-        x = max(0, self.root.winfo_rootx() + (self.root.winfo_width()-win_w)//2)
-        y = max(0, self.root.winfo_rooty() + (self.root.winfo_height()-win_h)//2)
-        window.geometry(f"{win_w}x{win_h}+{x}+{y}")
+        win_w, win_h = 520, 550
+        x = max(0, self.root.winfo_rootx() + (self.root.winfo_width() - win_w)//2)
+        y = max(0, self.root.winfo_rooty() + (self.root.winfo_height() - win_h)//2)
+        window.geometry(f'{win_w}x{win_h}+{x}+{y}')
         window.resizable(False, False)
         window.configure(bg=BG)
         window.transient(self.root)
         window.grab_set()
-        try:
-            ico = app_asset("icono.ico")
-            if sys.platform == "win32" and ico.exists():
-                window.iconbitmap(str(ico))
-        except tk.TclError:
-            pass
         content = tk.Frame(window, bg=BG, padx=28, pady=23)
-        content.pack(fill="both", expand=True)
-        self._label(content, "EDITAR PÁGINA" if old else "CREAR PÁGINA", weight="bold", size=17).pack(anchor="w")
-        self._label(content, "Incluye portadas, capítulos y hojas en blanco en el orden que elijas.",
-                    color=MUTED, size=9).pack(anchor="w", pady=(6,15))
-
-        def select(caption, variable, choices):
-            self._label(content, caption, weight="bold", color=MUTED, size=9).pack(anchor="w", pady=(7,4))
-            combo = ttk.Combobox(content, textvariable=variable, values=choices, state="readonly",
-                                 style="Custom.TCombobox")
-            combo.pack(fill="x")
+        content.pack(fill='both', expand=True)
+        self._label(content, 'EDITAR PÁGINA' if old else 'CREAR PÁGINA',
+                    weight='bold', size=17).pack(anchor='w')
+        self._label(content, 'Elige un diseño o personaliza una foto, colores y textos.',
+                    color=MUTED, size=9).pack(anchor='w', pady=(6, 15))
+        def select(caption, var, choices):
+            self._label(content, caption, weight='bold', color=MUTED, size=9).pack(anchor='w', pady=(7,4))
+            combo = ttk.Combobox(content, textvariable=var, values=choices,
+                                 state='readonly', style='Custom.TCombobox')
+            combo.pack(fill='x')
             return combo
-        select("TIPO DE PÁGINA", kind, list(KINDS))
-        self._label(content, "TÍTULO", weight="bold", color=MUTED, size=9).pack(anchor="w", pady=(10,4))
+        select('TIPO DE PÁGINA', kind, list(KINDS))
+        self._label(content, 'TÍTULO', weight='bold', color=MUTED, size=9).pack(anchor='w', pady=(10,4))
         title_input = tk.Entry(content, textvariable=title, bg=SURFACE_2, fg=TEXT,
-                               font=("Segoe UI", 11), insertbackground=ACCENT, relief="flat")
-        title_input.pack(fill="x", ipady=7)
-        self._label(content, "SUBTÍTULO (OPCIONAL)", weight="bold", color=MUTED, size=9).pack(anchor="w", pady=(10,4))
+                               font=('Segoe UI', 11), insertbackground=ACCENT, relief='flat')
+        title_input.pack(fill='x', ipady=7)
+        self._label(content, 'SUBTÍTULO (OPCIONAL)', weight='bold', color=MUTED, size=9).pack(anchor='w', pady=(10,4))
         subtitle_input = tk.Entry(content, textvariable=subtitle, bg=SURFACE_2, fg=TEXT,
-                                  font=("Segoe UI", 11), insertbackground=ACCENT, relief="flat")
-        subtitle_input.pack(fill="x", ipady=7)
-        select("COLOR DE FONDO", theme, list(THEMES))
-        note = self._label(content, "Las portadas y separadores ocupan siempre una hoja completa.",
-                           color=MUTED, size=9)
-        note.pack(anchor="w", pady=(10,0))
+                                  font=('Segoe UI', 11), insertbackground=ACCENT, relief='flat')
+        subtitle_input.pack(fill='x', ipady=7)
+        select('COLOR / DISEÑO', theme, [*THEMES, CUSTOM_THEME])
+        self._label(content, 'Con «Personalizar» podrás escoger cualquier color o foto de fondo,\n'
+                    'mover el título y subtítulo y cambiar sus tamaños.',
+                    color=MUTED, size=9, justify='left').pack(anchor='w', pady=(11,0))
         controls = tk.Frame(content, bg=BG)
-        controls.pack(side="bottom", fill="x", pady=(16,0))
-        self._button(controls, "Cancelar", window.destroy, small=True).pack(side="right")
-
+        controls.pack(side='bottom', fill='x', pady=(16,0))
+        self._button(controls, 'Cancelar', window.destroy, small=True).pack(side='right')
         def update_kind(*_):
-            state = "disabled" if kind.get() == "Página en blanco" else "normal"
+            state = 'disabled' if kind.get() == 'Página en blanco' else 'normal'
             title_input.configure(state=state)
             subtitle_input.configure(state=state)
-        kind.trace_add("write", update_kind)
+        kind.trace_add('write', update_kind)
         update_kind()
-
         def create():
-            try:
-                spec = validate_special_spec({"kind": kind.get(), "title": title.get(),
-                                              "subtitle": subtitle.get(), "theme": theme.get()})
-            except ValueError as exc:
-                messagebox.showwarning("Página especial", str(exc), parent=window)
+            if theme.get() == CUSTOM_THEME:
+                initial = {'kind':kind.get(), 'title':title.get(), 'subtitle':subtitle.get(),
+                           'theme':CUSTOM_THEME}
+                window.destroy()
+                self._custom_page_dialog(path, initial=initial)
                 return
-            new = path is None
-            candidate = (Path(self.special_temp.name) / f"pagina_{uuid.uuid4().hex}.png") if new else path
-            landscape = self.orientation.get() == "Horizontal"
-            if self.orientation.get() == "Automática" and self.pages and new:
-                sw, sh = self.details.get(self.pages[0], (1,2))
-                landscape = sw > sh
-            if not new:
-                sw, sh = self.details.get(path, (1,2))
-                landscape = sw > sh
             try:
-                save_special_thumbnail(candidate, spec, landscape=landscape)
-                self.thumbnails.pop(candidate, None)
-                self.thumbnails_small.pop(candidate, None)
-                self._thumbnail(candidate)
-            except Exception as exc:
-                messagebox.showerror("Página especial", str(exc), parent=window)
+                self._commit_special_page({'kind':kind.get(),'title':title.get(),
+                                           'subtitle':subtitle.get(),'theme':theme.get()}, path)
+            except (ValueError, OSError) as exc:
+                messagebox.showwarning('Página especial', str(exc), parent=window)
                 return
-            self.special_pages[candidate] = spec
-            self.path_labels[candidate] = ("Página en blanco" if spec["kind"] == "Página en blanco"
-                                           else f"{spec['kind']}: {spec['title']}")
-            self.details[candidate] = source_dimensions(candidate)
-            if new:
-                self.paths.append(candidate)
-                if self.selected in self.pages:
-                    self.pages.insert(self.pages.index(self.selected)+1, candidate)
-                else:
-                    self.pages.append(candidate)
-            self.selected = candidate
-            self.render_library()
-            self.render_order()
-            self.feedback.set("Página preparada. Puedes cambiar su posición o editarla.")
             window.destroy()
-        self._button(controls, "Guardar página", create, small=True, accent=True).pack(side="right", padx=(0,9))
+        self._button(controls, 'Guardar página', create, small=True, accent=True).pack(side='right', padx=(0,9))
         title_input.focus_set()
 
     def _thumbnail(self, path: Path) -> ImageTk.PhotoImage:
@@ -477,7 +499,7 @@ class ReveloApp:
                 y = (background.height - rgba.height) // 2
                 background.alpha_composite(rgba, (x, y))
                 self.thumbnails[path] = ImageTk.PhotoImage(background.convert("RGB"))
-                self.thumbnails_small[path] = ImageTk.PhotoImage(background.convert("RGB").resize((50, 36), Image.Resampling.LANCZOS))
+                self.thumbnails_small[path] = ImageTk.PhotoImage(background.convert("RGB").resize((124, 92), Image.Resampling.LANCZOS))
         return self.thumbnails[path]
 
     def add_photos(self):
@@ -574,7 +596,8 @@ class ReveloApp:
     def _set_busy(self, active: bool):
         self.is_busy = active
         state = "disabled" if active else "normal"
-        for button in (self.add_btn, self.clear_btn, self.reset_btn,
+        for button in (self.add_btn, self.special_btn, self.mobile_btn,
+                       self.clear_btn, self.reset_btn,
                        self.preview_btn, self.export_btn, self.open_project_btn,
                        self.save_project_btn):
             button.configure(state=state)
@@ -685,6 +708,7 @@ class ReveloApp:
             count += 1
         if count and was_empty and detected_paper:
             self.paper.set(detected_paper)
+        self.pages = anchored_order(self.pages, self.special_pages)
         self.render_library()
         self.render_order()
         self._set_busy(False)
@@ -710,6 +734,8 @@ class ReveloApp:
         self.special_pages.pop(path, None)
         if self.selected == path:
             self.selected = None
+        if self.order_selected == path:
+            self.order_selected = None
         self.render_library()
         self.render_order()
         self.feedback.set(f"Quitada de la lista: {path.name}. El archivo original se conserva.")
@@ -727,6 +753,7 @@ class ReveloApp:
             self.pdf_origins.clear()
             self.special_pages.clear()
             self.selected = None
+            self.order_selected = None
             self.render_library()
             self.render_order()
             self.feedback.set("Lista vacía. Los originales no se han modificado.")
@@ -734,7 +761,7 @@ class ReveloApp:
 
     def reset_order(self):
         if self.paths:
-            self.pages = self.paths.copy()
+            self.pages = anchored_order(self.paths.copy(), self.special_pages)
             self.render_order()
             self.feedback.set("Restaurado el orden en que cargaste las fotos y los PDF.")
 
@@ -750,6 +777,7 @@ class ReveloApp:
             child.destroy()
 
     def render_library(self):
+        offset = self.library_area.canvas.yview()[0]
         self._clear_children(self.library_area.inner)
         self.count_var.set(f"{len(self.paths)} elemento{'s' if len(self.paths) != 1 else ''}")
         if not self.paths:
@@ -788,9 +816,10 @@ class ReveloApp:
                 self._button(card, "Editar página", lambda p=path: self.special_page_dialog(p),
                              small=True).pack(fill="x", pady=(6,0))
             for part in (card, thumb, lbl, meta):
-                self._make_draggable(part, path)
+                self._make_draggable(part, path, 'library')
             self.library_area.bind_wheel_recursive(card)
         self.library_area._update_scrollregion()
+        self.library_area.canvas.yview_moveto(offset)
 
     def _show_empty_order(self):
         self._clear_children(self.order_area.inner)
@@ -799,50 +828,58 @@ class ReveloApp:
                     color=MUTED, size=11, justify="center").pack(pady=100)
 
     def render_order(self):
-        per_sheet = int(self.per_sheet.get())
         groups = self._groups()
         sheet_number = {path: i + 1 for i, group in enumerate(groups) for path in group}
-        self.page_count_var.set(f"{len(self.pages)} elementos · {len(groups)} hojas")
+        self.page_count_var.set(f'{len(self.pages)} elementos · {len(groups)} hojas')
         if not self.pages:
             self._show_empty_order()
             return
         offset = self.order_area.canvas.yview()[0]
         self._clear_children(self.order_area.inner)
+        pinned = cover_path(self.special_pages)
         for idx, path in enumerate(self.pages):
+            selected = self.order_selected == path
+            is_cover = path == pinned
             slot = tk.Frame(self.order_area.inner, bg=SURFACE_2,
-                            highlightbackground=BORDER, highlightthickness=1,
-                            padx=10, pady=9, cursor="hand2")
+                            highlightbackground=ACCENT if selected else BORDER,
+                            highlightthickness=3 if selected else 1,
+                            padx=9, pady=8, cursor='hand2')
             slot.foto_slot_index = idx
-            slot.pack(fill="x", padx=4, pady=4)
-            number = tk.Label(slot, text=f"{idx + 1:02d}", bg=ACCENT_DARK, fg=ACCENT,
-                              width=3, font=("Segoe UI", 12, "bold"), pady=12)
-            number.pack(side="left", padx=(0, 10))
+            slot.pack(fill='x', padx=4, pady=5)
+            number = tk.Label(slot, text=f'{idx + 1:02d}',
+                              bg=ACCENT if selected else ACCENT_DARK,
+                              fg=BG if selected else ACCENT,
+                              width=3, font=('Segoe UI', 14, 'bold'), pady=24)
+            number.pack(side='left', padx=(0, 11))
             thumb = tk.Label(slot, image=self.thumbnails_small[path], bg=SURFACE_2,
-                             borderwidth=0, cursor="hand2")
-            thumb.pack(side="left", padx=(0, 10))
+                             borderwidth=0, cursor='hand2')
+            thumb.pack(side='left', padx=(0, 12))
             text_box = tk.Frame(slot, bg=SURFACE_2)
-            text_box.pack(side="left", fill="x", expand=True)
+            text_box.pack(side='left', fill='x', expand=True)
             display_name = self.path_labels.get(path, path.name)
-            short = display_name if len(display_name) <= 35 else display_name[:31] + "…"
-            name = self._label(text_box, short, weight="bold", size=10, bg=SURFACE_2, anchor="w")
-            name.pack(fill="x")
+            short = display_name if len(display_name) <= 48 else display_name[:45] + '…'
+            name = self._label(text_box, short, weight='bold', size=10, bg=SURFACE_2,
+                               anchor='w', wraplength=285, justify='left')
+            name.pack(fill='x')
             dim = self.details.get(path, (0, 0))
-            sub = self._label(text_box, (f"Hoja {sheet_number[path]} · página independiente" if path in self.special_pages
-                                         else f"Hoja {sheet_number[path]}  ·  {dim[0]} × {dim[1]} px"),
-                              color=MUTED, size=9, bg=SURFACE_2, anchor="w")
-            sub.pack(fill="x", pady=(3, 0))
+            subtext = ('Portada fija · inicio del documento' if is_cover else
+                       f'Hoja {sheet_number[path]} · página independiente' if path in self.special_pages else
+                       f'Hoja {sheet_number[path]} · {dim[0]} × {dim[1]} px')
+            sub = self._label(text_box, subtext, color=ACCENT if is_cover else MUTED,
+                              size=9, bg=SURFACE_2, anchor='w')
+            sub.pack(fill='x', pady=(5,0))
             arrows = tk.Frame(slot, bg=SURFACE_2)
-            arrows.pack(side="right", padx=(8, 0))
-            b_up = self._button(arrows, "↑", lambda n=idx: self._shift(n, -1), small=True)
-            b_down = self._button(arrows, "↓", lambda n=idx: self._shift(n, +1), small=True)
-            b_up.pack(side="left", padx=(0, 3))
-            b_down.pack(side="left")
-            if idx == 0:
-                b_up.configure(state="disabled")
-            if idx == len(self.pages) - 1:
-                b_down.configure(state="disabled")
+            arrows.pack(side='right', padx=(7,0))
+            b_up = self._button(arrows, '↑', lambda n=idx: self._shift(n,-1), small=True)
+            b_down = self._button(arrows, '↓', lambda n=idx: self._shift(n,+1), small=True)
+            b_up.pack(side='top', pady=(0,6))
+            b_down.pack(side='top')
+            if idx == 0 or (idx == 1 and pinned in self.pages):
+                b_up.configure(state='disabled')
+            if idx == len(self.pages) - 1 or is_cover:
+                b_down.configure(state='disabled')
             for part in (slot, number, thumb, text_box, name, sub):
-                self._make_draggable(part, path)
+                self._make_draggable(part, path, 'order')
             self.order_area.bind_wheel_recursive(slot)
         self.order_area._update_scrollregion()
         self.order_area.canvas.yview_moveto(offset)
@@ -850,89 +887,87 @@ class ReveloApp:
             self._show_preview_page()
 
     def _shift(self, index, delta):
-        j = index + delta
-        if j < 0 or j >= len(self.pages):
+        j=index+delta
+        if not 0 <= j < len(self.pages):
             return
-        self.pages[index], self.pages[j] = self.pages[j], self.pages[index]
+        path=self.pages[index]
+        if path == cover_path(self.special_pages) or (j == 0 and cover_path(self.special_pages) in self.pages):
+            return
+        self.pages[index],self.pages[j]=self.pages[j],self.pages[index]
+        self.order_selected=path
         self.render_order()
 
     def _reposition(self, path, index):
-        if path not in self.pages or index < 0 or index >= len(self.pages):
+        if path not in self.pages or not 0 <= index < len(self.pages):
             return
-        old = self.pages.index(path)
-        if old != index:
-            self.pages.pop(old)
-            self.pages.insert(index, path)
+        old=self.pages.index(path)
+        updated=move_item(self.pages,path,index,self.special_pages)
+        if self.pages != updated:
+            self.pages=updated
+            self.order_selected=path
             self.render_order()
-            self.feedback.set(f"«{self.path_labels.get(path, path.name)}» pasa a la posición {index + 1}.")
+            self.feedback.set(f'«{self.path_labels.get(path,path.name)}» pasa a la posición {self.pages.index(path)+1}.')
+        else:
+            self.order_selected=path
+            self.render_order()
 
-    def _make_draggable(self, widget, path):
-        widget.bind("<ButtonPress-1>", lambda e, p=path: self._drag_press(e, p))
-        widget.bind("<B1-Motion>", self._drag_motion)
-        widget.bind("<ButtonRelease-1>", self._drag_release)
+    def _make_draggable(self,widget,path,panel):
+        widget.bind('<ButtonPress-1>',lambda e,p=path,origin=panel:self._drag_press(e,p,origin))
+        widget.bind('<B1-Motion>',self._drag_motion)
+        widget.bind('<ButtonRelease-1>',self._drag_release)
 
-    def _drag_press(self, event, path):
+    def _drag_press(self,event,path,panel):
         if self.is_busy:
             return
-        self.drag_source = path
-        self.drag_begin = (event.x_root, event.y_root)
-        self.is_dragging = False
+        self.drag_source=path
+        self.drag_origin=panel
+        self.drag_begin=(event.x_root,event.y_root)
+        self.is_dragging=False
 
-    def _drag_motion(self, event):
-        if not self.drag_source or self.drag_begin is None:
+    def _drag_motion(self,event):
+        if self.drag_source is None or self.drag_begin is None:
             return
-        dx = abs(event.x_root - self.drag_begin[0])
-        dy = abs(event.y_root - self.drag_begin[1])
-        if dx + dy < 9 and not self.is_dragging:
+        dx=abs(event.x_root-self.drag_begin[0])
+        dy=abs(event.y_root-self.drag_begin[1])
+        if dx+dy<9 and not self.is_dragging:
             return
         if not self.is_dragging:
-            self.is_dragging = True
-            self.drag_ghost = tk.Toplevel(self.root)
+            self.is_dragging=True
+            self.drag_ghost=tk.Toplevel(self.root)
             self.drag_ghost.overrideredirect(True)
-            self.drag_ghost.attributes("-topmost", True)
-            try:
-                self.drag_ghost.attributes("-alpha", 0.9)
-            except tk.TclError:
-                pass
-            tk.Label(self.drag_ghost, text=f"  ↕  {self.path_labels.get(self.drag_source, self.drag_source.name)[:31]}  ",
-                     bg=ACCENT, fg=BG, padx=9, pady=7,
-                     font=("Segoe UI", 10, "bold")).pack()
+            self.drag_ghost.attributes('-topmost',True)
+            try:self.drag_ghost.attributes('-alpha',0.9)
+            except tk.TclError:pass
+            tk.Label(self.drag_ghost,text='  ↕  '+self.path_labels.get(self.drag_source,self.drag_source.name)[:31]+'  ',
+                     bg=ACCENT,fg=BG,padx=9,pady=7,font=('Segoe UI',10,'bold')).pack()
         if self.drag_ghost:
-            self.drag_ghost.geometry(f"+{event.x_root + 14}+{event.y_root + 14}")
+            self.drag_ghost.geometry(f'+{event.x_root+14}+{event.y_root+14}')
 
-    def _drag_release(self, event):
-        path = self.drag_source
-        moving = self.is_dragging
-        self.drag_source = None
-        self.drag_begin = None
-        self.is_dragging = False
+    def _drag_release(self,event):
+        path=self.drag_source
+        moving=self.is_dragging
+        origin=self.drag_origin
+        self.drag_source=None
+        self.drag_origin=None
+        self.drag_begin=None
+        self.is_dragging=False
         if self.drag_ghost:
             self.drag_ghost.destroy()
-            self.drag_ghost = None
+            self.drag_ghost=None
         if path is None:
             return
         if moving:
-            target = self.root.winfo_containing(event.x_root, event.y_root)
-            index = None
-            while target is not None:
-                if hasattr(target, "foto_slot_index"):
-                    index = target.foto_slot_index
-                    break
-                target = getattr(target, "master", None)
-            if index is not None:
-                self._reposition(path, index)
+            target=self.root.winfo_containing(event.x_root,event.y_root)
+            while target is not None and not hasattr(target,'foto_slot_index'):
+                target=getattr(target,'master',None)
+            if target is not None:
+                self._reposition(path,target.foto_slot_index)
+        elif origin == 'order':
+            # Un simple clic solo selecciona: NO recoloca la foto de la biblioteca.
+            self.order_selected=path
+            self.render_order()
         else:
-            target = event.widget
-            index = None
-            while target is not None:
-                if hasattr(target, "foto_slot_index"):
-                    index = target.foto_slot_index
-                    break
-                target = getattr(target, "master", None)
-            if index is not None and self.selected is not None and self.selected != path:
-                self._reposition(self.selected, index)
-                return
-            self.selected = path
+            self.selected=path
             self.render_library()
 
     def _options(self):
@@ -1219,7 +1254,7 @@ class ReveloApp:
         old = self.project_temp
         self.project_temp = temporary
         self.paths = loaded["paths"]
-        self.pages = loaded["pages"]
+        self.pages = anchored_order(loaded['pages'], loaded.get('special_pages', {}))
         self.path_labels = loaded["labels"]
         self.pdf_origins = loaded["pdf_origins"]
         self.special_pages = loaded.get("special_pages", {})
@@ -1228,6 +1263,7 @@ class ReveloApp:
         self.thumbnails_small.clear()
         self.details.clear()
         self.selected = None
+        self.order_selected = None
         self.output_path = None
         self.open_btn.configure(state="disabled")
         for path in self.paths:

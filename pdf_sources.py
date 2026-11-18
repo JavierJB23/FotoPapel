@@ -14,6 +14,7 @@ from tempfile import NamedTemporaryFile
 from zipfile import ZIP_DEFLATED, ZipFile, BadZipFile
 import json
 import os
+import re
 
 from processor import SUPPORTED_EXTENSIONS, source_dimensions
 
@@ -86,11 +87,31 @@ def _make_bundle(paths: list[Path], photos_per_page: int,
                         dst.write(block)
             if size > MAX_SOURCE_BYTES:
                 raise ValueError("Una imagen recuperada es demasiado grande")
+            special_spec = validate_special_spec(special_pages[path]) if path in special_pages else None
+            bg_meta = {}
+            if special_spec and special_spec.get('background_type') == 'imagen':
+                bgpath = Path(special_spec['background_image'])
+                if not bgpath.is_file():
+                    raise ValueError('No se encuentra el fondo de una portada personalizada')
+                bgsize = bgpath.stat().st_size
+                total += bgsize
+                if bgsize > MAX_SOURCE_BYTES or total > MAX_TOTAL_BYTES:
+                    raise ValueError('Una imagen de fondo supera el límite de tamaño del PDF')
+                bgkey = f'backgrounds/{index:05d}{bgpath.suffix.lower()}'
+                with bgpath.open('rb') as src, z.open(bgkey, 'w') as dst:
+                    digest_bg = sha256()
+                    for piece in iter(lambda: src.read(1024*1024), b''):
+                        digest_bg.update(piece)
+                        dst.write(piece)
+                special_spec['background_image'] = bgkey
+                bg_meta = {'background_asset': bgkey, 'background_size': bgsize,
+                           'background_sha256': digest_bg.hexdigest()}
             items.append({"name": path.name[:180], "asset": key,
                           "page": page_number[path],
-                          "special": validate_special_spec(special_pages[path]) if path in special_pages else None,
+                          "special": special_spec,
                           "sha256": checksum.hexdigest(), "size": size,
-                          "recovered_from_flat_pdf": path in pdf_page_paths})
+                          "recovered_from_flat_pdf": path in pdf_page_paths,
+                          **bg_meta})
         manifest = {"format": FORMAT_NAME, "version": FORMAT_VERSION,
                     "photos_per_page": photos_per_page, "items": items}
         z.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False))
@@ -168,7 +189,7 @@ def recover_sources(pdf_path: Path, folder: Path, progress=None, *, include_spec
             photos_per_page = manifest.get("photos_per_page")
             if (not isinstance(items, list) or not 0 < len(items) <= MAX_IMAGES
                     or photos_per_page not in (1, 2, 4, 6, 9)
-                    or len(info) != len(items) + 1):
+                    or len(info) != len(items) + 1 + sum(bool(i.get('background_asset')) for i in items if isinstance(i, dict))):
                 raise ValueError("El índice de originales del PDF no es válido")
             from special_pages import validate_special_spec
             special_specs = []
@@ -185,12 +206,45 @@ def recover_sources(pdf_path: Path, folder: Path, progress=None, *, include_spec
                 size = item.get("size")
                 checksum = item.get("sha256")
                 page = item.get("page")
-                special = item.get("special")
+                special = item.get('special')
                 if special is not None:
                     try:
+                        special = dict(special)
+                        bgkey = item.get('background_asset')
+                        if special.get('background_type') == 'imagen':
+                            if (not isinstance(bgkey,str) or
+                                    not re.fullmatch(r'backgrounds/[0-9]{5}\.(jpg|jpeg|png|webp|bmp|tif|tiff|heic|heif)', bgkey)
+                                    or bgkey != special.get('background_image') or
+                                    bgkey not in info or info[bgkey].is_dir()):
+                                raise ValueError('Fondo de portada inválido')
+                            bginfo = info[bgkey]
+                            bgsize = item.get('background_size')
+                            bgsha = item.get('background_sha256')
+                            if (not isinstance(bgsize,int) or bgsize != bginfo.file_size or
+                                    bgsize > MAX_SOURCE_BYTES or
+                                    not isinstance(bgsha,str) or not re.fullmatch('[0-9a-f]{64}',bgsha)):
+                                raise ValueError('Información del fondo incorrecta')
+                            total += bgsize
+                            if total > MAX_TOTAL_BYTES:
+                                raise ValueError('Fondo de portada demasiado grande')
+                            bgdest=folder / f'fondo_{idx:05d}{Path(bgkey).suffix}'
+                            digest_bg=sha256()
+                            with z.open(bgkey) as ins, bgdest.open('wb') as outs:
+                                for block in iter(lambda: ins.read(1024*1024),b''):
+                                    digest_bg.update(block)
+                                    outs.write(block)
+                            staged.append(bgdest)
+                            if digest_bg.hexdigest() != bgsha:
+                                raise ValueError('Fondo de portada dañado')
+                            source_dimensions(bgdest)
+                            special['background_image'] = str(bgdest)
+                        elif bgkey is not None:
+                            raise ValueError('Fondo inesperado')
                         special = validate_special_spec(special)
-                    except ValueError as exc:
-                        raise ValueError("Portada del PDF no válida") from exc
+                    except (ValueError, TypeError, OSError) as exc:
+                        raise ValueError('Portada del PDF no válida') from exc
+                elif item.get('background_asset') is not None:
+                    raise ValueError('Fondo inesperado sin portada')
                 special_specs.append(special)
                 if (not isinstance(size, int) or size != entry.file_size
                         or size > MAX_SOURCE_BYTES or size < 1
