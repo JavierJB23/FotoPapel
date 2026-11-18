@@ -63,6 +63,7 @@ class ExportOptions:
     pdf_page_paths: frozenset[Path] = frozenset()
     photos_per_page: int = 1  # 1, 2, 4, 6 o 9; 1 conserva el funcionamiento de v1.3
     special_pages: dict[Path, dict] = field(default_factory=dict)  # portadas, títulos, hojas en blanco
+    photo_edits: dict[Path, dict] = field(default_factory=dict)  # cambios no destructivos
 
     def validate(self) -> None:
         if self.paper not in PAPER_SIZES:
@@ -80,6 +81,9 @@ class ExportOptions:
         from special_pages import validate_special_spec
         for spec in self.special_pages.values():
             validate_special_spec(spec)
+        from photo_edits import validate_edits
+        for spec in self.photo_edits.values():
+            validate_edits(spec)
         if self.fmt not in ("Imagenes", "PDF", "Word"):
             raise ValueError("Formato de salida no reconocido")
 
@@ -97,6 +101,9 @@ def dimensions_mm(path: Path, opts: ExportOptions) -> tuple[float, float]:
         sw, sh = source.size
         if exif_orientation in (5, 6, 7, 8):
             sw, sh = sh, sw
+    if path in opts.photo_edits:
+        from photo_edits import transformed_dimensions
+        sw, sh = transformed_dimensions((sw, sh), opts.photo_edits[path])
     return (h, w) if sw > sh else (w, h)
 
 
@@ -293,6 +300,27 @@ def printable_box(size: tuple[int, int], physical_mm: tuple[float, float], *,
     return x0, y0, x1, y1
 
 
+def _prepared_photo(path: Path, opts: ExportOptions) -> tuple[Image.Image, bool]:
+    """Contenido original limpio + edición reversible, sin escribir el origen."""
+    from photo_edits import apply_edits
+    with Image.open(path) as raw:
+        original = _flatten_rgb(ImageOps.exif_transpose(raw))
+    try:
+        if path in opts.pdf_page_paths:
+            prepared, trimmed = _trim_revelo_like_page_background(original)
+        else:
+            prepared, trimmed = original.copy(), False
+    finally:
+        original.close()
+    if path in opts.photo_edits:
+        try:
+            edited = apply_edits(prepared, opts.photo_edits[path])
+        finally:
+            prepared.close()
+        return edited, trimmed
+    return prepared, trimmed
+
+
 def _render_inside(im: Image.Image, size: tuple[int, int], fit: str) -> Image.Image:
     """Compone la foto en un rectángulo disponible, sin conocer el papel."""
     out_w, out_h = size
@@ -347,48 +375,39 @@ def render_print_image(
     box = printable_box((out_w, out_h), (w_mm, h_mm),
                         binding=opts.binding, page_index=page_index)
     use_w, use_h = full_box[2] - full_box[0], full_box[3] - full_box[1]
-    with Image.open(path) as raw:
-        im = _flatten_rgb(ImageOps.exif_transpose(raw))
+    working, trimmed_pdf_border = _prepared_photo(path, opts)
     try:
-        working = im
-        trimmed_pdf_border = False
-        if path in opts.pdf_page_paths:
-            working, trimmed_pdf_border = _trim_revelo_like_page_background(im)
-        try:
-            sw, sh = working.size
-            fill_factor = max(use_w / sw, use_h / sh)
-            contain_factor = min(use_w / sw, use_h / sh)
-            low_resolution = (fill_factor if opts.fit == "Rellenar (recortar)" else contain_factor) > 1.25
+        sw, sh = working.size
+        fill_factor = max(use_w / sw, use_h / sh)
+        contain_factor = min(use_w / sw, use_h / sh)
+        low_resolution = (fill_factor if opts.fit == "Rellenar (recortar)" else contain_factor) > 1.25
 
-            # Si el PDF importado no parece tener un borde artificial grande,
-            # se conserva entero como página cerrada para no alterar su diseño.
-            if path in opts.pdf_page_paths and not trimmed_pdf_border:
-                whole = ImageOps.contain(working, (out_w, out_h), method=Image.Resampling.LANCZOS)
-                if whole.size == (out_w, out_h):
-                    return whole, (w_mm, h_mm), low_resolution
-                paper = Image.new("RGB", (out_w, out_h), "white")
-                paper.paste(whole, ((out_w - whole.width)//2, (out_h - whole.height)//2))
-                whole.close()
-                return paper, (w_mm, h_mm), low_resolution
+        # Si el PDF importado no parece tener un borde artificial grande,
+        # se conserva entero como página cerrada para no alterar su diseño.
+        if path in opts.pdf_page_paths and not trimmed_pdf_border and path not in opts.photo_edits:
+            whole = ImageOps.contain(working, (out_w, out_h), method=Image.Resampling.LANCZOS)
+            if whole.size == (out_w, out_h):
+                return whole, (w_mm, h_mm), low_resolution
+            paper = Image.new("RGB", (out_w, out_h), "white")
+            paper.paste(whole, ((out_w - whole.width)//2, (out_h - whole.height)//2))
+            whole.close()
+            return paper, (w_mm, h_mm), low_resolution
 
-            # El fondo puede ocupar el canal de encuadernación, porque lo importante
-            # es reservar ese espacio libre de contenido legible, no libre de tinta.
-            if opts.binding and opts.fit == "Ampliar fondo (sin recortar)":
-                full_bleed = _extended_background(working, (out_w, out_h))
-                inside = ImageOps.contain(working, (box[2] - box[0], box[3] - box[1]),
-                                          method=Image.Resampling.LANCZOS)
-                try:
-                    x = box[0] + ((box[2] - box[0]) - inside.width) // 2
-                    y = box[1] + ((box[3] - box[1]) - inside.height) // 2
-                    full_bleed.paste(inside, (x, y))
-                finally:
-                    inside.close()
-                return full_bleed, (w_mm, h_mm), low_resolution
+        # El fondo puede ocupar el canal de encuadernación, porque lo importante
+        # es reservar ese espacio libre de contenido legible, no libre de tinta.
+        if opts.binding and opts.fit == "Ampliar fondo (sin recortar)":
+            full_bleed = _extended_background(working, (out_w, out_h))
+            inside = ImageOps.contain(working, (box[2] - box[0], box[3] - box[1]),
+                                      method=Image.Resampling.LANCZOS)
+            try:
+                x = box[0] + ((box[2] - box[0]) - inside.width) // 2
+                y = box[1] + ((box[3] - box[1]) - inside.height) // 2
+                full_bleed.paste(inside, (x, y))
+            finally:
+                inside.close()
+            return full_bleed, (w_mm, h_mm), low_resolution
 
-            result_inner = _render_inside(working, (box[2] - box[0], box[3] - box[1]), opts.fit)
-        finally:
-            if working is not im:
-                working.close()
+        result_inner = _render_inside(working, (box[2] - box[0], box[3] - box[1]), opts.fit)
         if not opts.binding:
             return result_inner, (w_mm, h_mm), low_resolution
         try:
@@ -398,7 +417,7 @@ def render_print_image(
             result_inner.close()
         return paper, (w_mm, h_mm), low_resolution
     finally:
-        im.close()
+        working.close()
 
 
 def page_groups(paths: Sequence[Path], per_page: int,
@@ -456,17 +475,9 @@ def _extended_layout_background(
         # La miniatura se calcula una sola vez por fuente, incluso cuando
         # una cuadrícula incompleta requiere repetirla para cubrir el fondo.
         for path in paths:
-            with Image.open(path) as raw:
-                original = _flatten_rgb(ImageOps.exif_transpose(raw))
-            try:
-                if path in opts.pdf_page_paths:
-                    prepared_image, _ = _trim_revelo_like_page_background(original)
-                else:
-                    prepared_image = original.copy()
-                prepared_image.thumbnail((1050, 1050), Image.Resampling.LANCZOS)
-                prepared.append(prepared_image)
-            finally:
-                original.close()
+            prepared_image, _ = _prepared_photo(path, opts)
+            prepared_image.thumbnail((1050, 1050), Image.Resampling.LANCZOS)
+            prepared.append(prepared_image)
 
         # Cada fotografía extiende sus propios colores hasta la mitad del
         # hueco con la siguiente y hasta el borde exterior del papel.
@@ -622,42 +633,34 @@ def render_layout_page(
     for idx, path in enumerate(paths):
         cx0, cy0, cx1, cy1 = cell_rects[idx]
         cw, ch = cx1 - cx0, cy1 - cy0
-        with Image.open(path) as raw:
-            original = _flatten_rgb(ImageOps.exif_transpose(raw))
+        content, _ = _prepared_photo(path, opts)
         try:
-            content = original
-            if path in opts.pdf_page_paths:
-                content, _ = _trim_revelo_like_page_background(original)
-            try:
-                sw, sh = content.size
-                factor = (max(cw / sw, ch / sh) if opts.fit == "Rellenar (recortar)"
-                          else min(cw / sw, ch / sh))
-                lowres_any |= factor > 1.25
-                if opts.fit == "Ampliar fondo (sin recortar)":
-                    # La propia hoja ya tiene un fondo común; pegar una celda
-                    # con su fondo particular crea un rectángulo perfectamente
-                    # visible. Solo superponemos la foto nítida y fundimos sus
-                    # bordes en el fondo de la hoja.
-                    photo = ImageOps.contain(content, (cw, ch),
-                                              method=Image.Resampling.LANCZOS)
-                    try:
-                        left = cx0 + (cw - photo.width) // 2
-                        top = cy0 + (ch - photo.height) // 2
-                        _blend_unaltered_photo_into_background(
-                            sheet, photo, (left, top, left+photo.width, top+photo.height))
-                    finally:
-                        photo.close()
-                else:
-                    tile = _render_inside(content, (cw, ch), opts.fit)
-                    try:
-                        sheet.paste(tile, (cx0, cy0))
-                    finally:
-                        tile.close()
-            finally:
-                if content is not original:
-                    content.close()
+            sw, sh = content.size
+            factor = (max(cw / sw, ch / sh) if opts.fit == "Rellenar (recortar)"
+                      else min(cw / sw, ch / sh))
+            lowres_any |= factor > 1.25
+            if opts.fit == "Ampliar fondo (sin recortar)":
+                # La propia hoja ya tiene un fondo común; pegar una celda
+                # con su fondo particular crea un rectángulo perfectamente
+                # visible. Solo superponemos la foto nítida y fundimos sus
+                # bordes en el fondo de la hoja.
+                photo = ImageOps.contain(content, (cw, ch),
+                                          method=Image.Resampling.LANCZOS)
+                try:
+                    left = cx0 + (cw - photo.width) // 2
+                    top = cy0 + (ch - photo.height) // 2
+                    _blend_unaltered_photo_into_background(
+                        sheet, photo, (left, top, left+photo.width, top+photo.height))
+                finally:
+                    photo.close()
+            else:
+                tile = _render_inside(content, (cw, ch), opts.fit)
+                try:
+                    sheet.paste(tile, (cx0, cy0))
+                finally:
+                    tile.close()
         finally:
-            original.close()
+            content.close()
     return sheet, (w_mm, h_mm), lowres_any
 
 
@@ -759,7 +762,7 @@ def export_pdf(paths: Sequence[Path], opts: ExportOptions, target: Path, progres
         # pueden recuperar cada fotografía, sin confundirla con los fondos borrosos.
         from pdf_sources import attach_sources
         attach_sources(target, list(paths), opts.photos_per_page, opts.pdf_page_paths,
-                       special_pages=opts.special_pages)
+                       special_pages=opts.special_pages, photo_edits=opts.photo_edits)
         if progress:
             progress(len(groups), len(groups), "Originales incluidos en el PDF")
     except Exception:

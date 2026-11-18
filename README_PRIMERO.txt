@@ -1,3 +1,57 @@
+REVELO v1.6 — EDITOR FOTOGRÁFICO (CANDIDATA A STABLE)
+=======================================================
+
+Esta versión parte exactamente del checkpoint Revelo v1.5.2 FIX05 STABLE.
+NO borres el ejecutable anterior hasta comprobar v1.6 en Windows.
+
+NOVEDADES
+1. En "FOTOS Y PDF CARGADOS" hay un botón "Editar foto" en cada imagen.
+   Las portadas y separadores conservan su editor específico.
+2. Recorte libre arrastrando un rectángulo y ajustando sus cuatro esquinas.
+   Recortes guiados: original, 1:1, 4:3, 3:4, 16:9, 9:16, A4/A5 y 10×15.
+3. Girar a izquierda/derecha, voltear y enderezar entre -15 y +15 grados.
+4. Controles de brillo, contraste, saturación y nitidez.
+5. "Quitar bordes blancos" intenta detectar un borde claro exterior.
+   Comprueba la selección antes de guardar: no todos los blancos son un marco.
+6. "Ver resultado" muestra el recorte final, y mantener pulsado "Original"
+   permite comparar con la fuente.
+7. Edición reversible: se guardan los parámetros, no una foto sustituida.
+   "Restablecer original" revierte todos los cambios.
+8. El proyecto .revelo y los PDF reversibles conservan los originales
+   y sus parámetros de edición. Las páginas especiales siguen funcionando.
+
+ACTUALIZAR EL PROGRAMA EN GITHUB (SIN INSTALAR NADA EN TU PC)
+1. Descarga y descomprime el ZIP de ACTUALIZACIÓN v1.6.
+2. Ve a https://github.com/JavierJB23/FotoPapel/upload/main
+3. Sube todos los archivos del ZIP. En la raíz se sustituyen:
+   main.py, processor.py, project_io.py, pdf_sources.py y README_PRIMERO.txt.
+   Se añaden photo_edits.py y photo_editor_ui.py en la misma raíz.
+   En tests/ se añade tests/test_photo_editor_v16.py.
+4. Pulsa "Commit changes".
+5. Abre https://github.com/JavierJB23/FotoPapel/actions
+6. Abre la compilación reciente; cuando aparezca verde, baja hasta "Artifacts"
+   y descarga "Revelo-Windows-EXE". Extrae el archivo y abre Revelo.exe.
+   No cambies el workflow ni instales Python en tu equipo.
+
+PRUEBA RECOMENDADA
+- Importa una foto por QR o desde tu PC. Abre "Editar foto".
+- Selecciona 10×15 horizontal y arrastra el recorte. Modifica saturación.
+- Comprueba "Original" y "Ver resultado". Guarda la edición.
+- Previsualiza y exporta PDF. Guarda un .revelo, ciérralo y vuelve a abrirlo.
+- Asegúrate de que la miniatura y el documento conservan el recorte.
+
+LIMITACIONES
+- La vista del editor usa una copia reducida para ir fluida; el documento
+  final se crea a partir del original a su resolución real.
+- Si conviertes una fotografía en PDF o Word corriente fuera de Revelo,
+  el archivo externo puede perder el historial editable. Los PDF reversibles
+  creados por Revelo sí conservan los datos, mientras se mantenga el adjunto.
+- En PDF antiguos aplanados no se pueden recuperar datos originales perdidos.
+
+--------------------------------------------------------------------
+DOCUMENTACIÓN DEL CHECKPOINT ANTERIOR
+--------------------------------------------------------------------
+
 REVELO v1.5.2 FIX05 — SCROLL Y VENTANA DEL EDITOR
 ====================================================
 

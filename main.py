@@ -28,6 +28,8 @@ from project_io import save_project, load_project, ProjectError
 from special_pages import KINDS, THEMES, CUSTOM_THEME, validate_special_spec, save_special_thumbnail
 from ordering_rules import cover_path, anchored_order, move_item, click_move
 from custom_editor import edit_custom_page
+from photo_editor_ui import edit_photo
+from photo_edits import validate_edits, has_edits, apply_edits
 import qrcode
 
 APP_NAME = "Revelo"
@@ -93,6 +95,8 @@ class ReveloApp:
         self.pdf_temp = tempfile.TemporaryDirectory(prefix="Revelo_PDF_")
         self.special_temp = tempfile.TemporaryDirectory(prefix="Revelo_Paginas_")
         self.special_pages: dict[Path, dict] = {}
+        self.photo_edits: dict[Path, dict] = {}  # instrucciones no destructivas
+        self.photo_editor_window = None
         self.mobile_temp = tempfile.TemporaryDirectory(prefix="Revelo_Movil_")
         self.project_temp = tempfile.TemporaryDirectory(prefix="Revelo_Proyecto_")
         self.project_path: Path | None = None
@@ -513,6 +517,9 @@ class ReveloApp:
         if path not in self.thumbnails:
             with Image.open(path) as original:
                 im = ImageOps.exif_transpose(original)
+                if path in self.photo_edits:
+                    processed = apply_edits(im.convert('RGB'), self.photo_edits[path])
+                    im = processed
                 im.thumbnail((150, 108), Image.Resampling.LANCZOS)
                 rgba = im.convert("RGBA")
                 background = Image.new("RGBA", (150, 108), (29, 45, 67, 255))
@@ -522,6 +529,30 @@ class ReveloApp:
                 self.thumbnails[path] = ImageTk.PhotoImage(background.convert("RGB"))
                 self.thumbnails_small[path] = ImageTk.PhotoImage(background.convert("RGB").resize((124, 92), Image.Resampling.LANCZOS))
         return self.thumbnails[path]
+
+    def edit_photo_dialog(self, path: Path):
+        """Editor separado por fotografía; no modifica archivos originales."""
+        if self.is_busy or path not in self.paths or path in self.special_pages:
+            return
+        if self.photo_editor_window is not None and self.photo_editor_window.winfo_exists():
+            self.photo_editor_window.lift()
+            return
+        def save_edits(spec):
+            spec = validate_edits(spec)
+            if has_edits(spec):
+                self.photo_edits[path] = spec
+            else:
+                self.photo_edits.pop(path, None)
+            self.thumbnails.pop(path, None)
+            self.thumbnails_small.pop(path, None)
+            self._thumbnail(path)
+            self.render_library()
+            self.render_order()
+            if self.preview_window is not None and self.preview_window.winfo_exists():
+                self._show_preview_page()
+            self.feedback.set(f"Edición guardada para «{self.path_labels.get(path, path.name)}». Original intacto.")
+        self.photo_editor_window = edit_photo(self.root, path, self.photo_edits.get(path), save_edits,
+                                              pdf_flattened=path in self.pdf_origins)
 
     def add_photos(self):
         if self.is_busy:
@@ -649,6 +680,7 @@ class ReveloApp:
             detected_paper = None
             mixed_pdf = False
             recovered_specials = {}
+            recovered_edits = {}
             seen = set()
             for source in selected:
                 if source in seen:
@@ -662,15 +694,16 @@ class ReveloApp:
                         progress = lambda i, n, name: self.updates.put(("import_progress", i, n, name))
                         try:
                             originals = recover_sources(source, temp_dir, progress=progress,
-                                                        include_specials=True)
+                                                        include_specials=True, include_edits=True)
                         except Exception:
                             # Si un lector elimina o altera el adjunto interno,
                             # el PDF debe seguir pudiendo abrirse como páginas.
                             originals = None
                             errors.append(f"{source.name}: no se recuperaron originales adjuntos; se leerán sus páginas como imágenes")
                         if originals is not None:
-                            images, sizes, per_sheet, recovered_specs = originals
+                            images, sizes, per_sheet, recovered_specs, source_edits = originals
                             recovered_specials.update(recovered_specs)
+                            recovered_edits.update(source_edits)
                             # Las fotos recuperadas son originales: NO se deben
                             # marcar como página PDF ni intentar quitarles un fondo.
                             paper, has_mixed = matched_paper(sizes)
@@ -705,11 +738,11 @@ class ReveloApp:
                 else:
                     errors.append(f"{source.name}: formato no admitido")
             self.updates.put(("import_done", items, detected_paper, mixed_pdf, errors,
-                              recovered_specials))
+                              recovered_specials, recovered_edits))
 
         threading.Thread(target=do_import, daemon=True).start()
 
-    def _finish_import(self, items, detected_paper, mixed_pdf, errors, specials=None):
+    def _finish_import(self, items, detected_paper, mixed_pdf, errors, specials=None, edits=None):
         was_empty = not self.paths
         count = 0
         for path, dims, label, origin in items:
@@ -722,6 +755,11 @@ class ReveloApp:
             self.path_labels[path] = label
             if path in (specials or {}):
                 self.special_pages[path] = specials[path]
+            if path in (edits or {}):
+                self.photo_edits[path] = edits[path]
+                self.thumbnails.pop(path, None)
+                self.thumbnails_small.pop(path, None)
+                self._thumbnail(path)
             if origin is not None:
                 self.pdf_origins[path] = origin
             self.paths.append(path)
@@ -753,6 +791,7 @@ class ReveloApp:
         self.path_labels.pop(path, None)
         self.pdf_origins.pop(path, None)
         self.special_pages.pop(path, None)
+        self.photo_edits.pop(path, None)
         if self.selected == path:
             self.selected = None
         if self.order_selected == path:
@@ -773,6 +812,7 @@ class ReveloApp:
             self.path_labels.clear()
             self.pdf_origins.clear()
             self.special_pages.clear()
+            self.photo_edits.clear()
             self.selected = None
             self.order_selected = None
             self.render_library()
@@ -835,6 +875,10 @@ class ReveloApp:
             remove.place(relx=1, x=-3, y=3, anchor="ne")
             if path in self.special_pages:
                 self._button(card, "Editar página", lambda p=path: self.special_page_dialog(p),
+                             small=True).pack(fill="x", pady=(6,0))
+            else:
+                button_name = "Editar foto ✎" if path not in self.photo_edits else "Editar foto ✓"
+                self._button(card, button_name, lambda p=path: self.edit_photo_dialog(p),
                              small=True).pack(fill="x", pady=(6,0))
             for part in (card, thumb, lbl, meta):
                 self._make_draggable(part, path, 'library')
@@ -1020,6 +1064,7 @@ class ReveloApp:
             pdf_page_paths=frozenset(self.pdf_origins),
             photos_per_page=int(self.per_sheet.get()),
             special_pages=dict(self.special_pages),
+            photo_edits={path: dict(spec) for path, spec in self.photo_edits.items()},
         )
 
     def open_preview(self):
@@ -1250,12 +1295,13 @@ class ReveloApp:
         paths, pages = self.paths.copy(), self.pages.copy()
         labels, origins, settings = dict(self.path_labels), dict(self.pdf_origins), self._project_settings()
         special = dict(self.special_pages)
+        photos_changed = dict(self.photo_edits)
 
         def worker():
             try:
                 save_project(target, paths, pages, labels, origins, settings,
                              progress=lambda n, total: self.updates.put(("project_progress", n, total, "Guardando")),
-                             special_pages=special)
+                             special_pages=special, photo_edits=photos_changed)
                 self.updates.put(("project_saved", target))
             except Exception as exc:
                 self.updates.put(("project_error", str(exc)))
@@ -1298,6 +1344,7 @@ class ReveloApp:
         self.path_labels = loaded["labels"]
         self.pdf_origins = loaded["pdf_origins"]
         self.special_pages = loaded.get("special_pages", {})
+        self.photo_edits = loaded.get("photo_edits", {})
         self.recovered_pdf_sources.clear()
         self.thumbnails.clear()
         self.thumbnails_small.clear()
@@ -1409,8 +1456,8 @@ class ReveloApp:
                     self.recovered_pdf_sources.add(source.resolve())
                     self.feedback.set(f"PDF reversible: recuperadas {count} fotografías originales de {source.name}")
                 elif event[0] == "import_done":
-                    _, items, detected_paper, mixed_pdf, errors, special = event
-                    self._finish_import(items, detected_paper, mixed_pdf, errors, special)
+                    _, items, detected_paper, mixed_pdf, errors, special, edits = event
+                    self._finish_import(items, detected_paper, mixed_pdf, errors, special, edits)
                     self.progress["value"] = 0
                     self.percent_text.set("(0 %)")
                 elif event[0] == "project_progress":

@@ -29,12 +29,15 @@ MAX_MANIFEST_BYTES = 4 * 1024 * 1024
 
 def _make_bundle(paths: list[Path], photos_per_page: int,
                  pdf_page_paths: Collection[Path] = (), *,
-                 special_pages: dict[Path, dict] | None = None) -> bytes:
+                 special_pages: dict[Path, dict] | None = None,
+                 photo_edits: dict[Path, dict] | None = None) -> bytes:
     if not paths or len(paths) > MAX_IMAGES:
         raise ValueError("Demasiadas imágenes para guardar sus originales en el PDF")
     from processor import page_groups
     from special_pages import validate_special_spec
     special_pages = special_pages or {}
+    photo_edits = photo_edits or {}
+    from photo_edits import validate_edits, has_edits
     page_number = {path: n for n, group in enumerate(page_groups(paths, photos_per_page, special_pages))
                    for path in group}
     items = []
@@ -109,6 +112,7 @@ def _make_bundle(paths: list[Path], photos_per_page: int,
             items.append({"name": path.name[:180], "asset": key,
                           "page": page_number[path],
                           "special": special_spec,
+                          "edits": validate_edits(photo_edits[path]) if path in photo_edits and has_edits(photo_edits[path]) else None,
                           "sha256": checksum.hexdigest(), "size": size,
                           "recovered_from_flat_pdf": path in pdf_page_paths,
                           **bg_meta})
@@ -120,7 +124,8 @@ def _make_bundle(paths: list[Path], photos_per_page: int,
 
 def attach_sources(pdf_path: Path, paths: list[Path], photos_per_page: int,
                    pdf_page_paths: Collection[Path] = (), *,
-                   special_pages: dict[Path, dict] | None = None) -> None:
+                   special_pages: dict[Path, dict] | None = None,
+                   photo_edits: dict[Path, dict] | None = None) -> None:
     """Inserta fuentes originales en un PDF sin modificar sus páginas visibles.
 
     Operación segura: el PDF existente solo se sustituye si la copia revisada
@@ -129,7 +134,8 @@ def attach_sources(pdf_path: Path, paths: list[Path], photos_per_page: int,
     from pypdf import PdfReader, PdfWriter
 
     pdf_path = Path(pdf_path)
-    content = _make_bundle(paths, photos_per_page, pdf_page_paths, special_pages=special_pages)
+    content = _make_bundle(paths, photos_per_page, pdf_page_paths, special_pages=special_pages,
+                           photo_edits=photo_edits)
     writer = PdfWriter()
     reader = PdfReader(str(pdf_path), strict=False)
     writer.append(reader)
@@ -153,7 +159,8 @@ def attach_sources(pdf_path: Path, paths: list[Path], photos_per_page: int,
             tmp.unlink(missing_ok=True)
 
 
-def recover_sources(pdf_path: Path, folder: Path, progress=None, *, include_specials: bool = False):
+def recover_sources(pdf_path: Path, folder: Path, progress=None, *, include_specials: bool = False,
+                    include_edits: bool = False):
     """Devuelve (paths, pages, per_sheet); opcionalmente también portadas.
 
     Si no hay adjunto devuelve None, para permitir importación clásica. Los
@@ -193,6 +200,8 @@ def recover_sources(pdf_path: Path, folder: Path, progress=None, *, include_spec
                 raise ValueError("El índice de originales del PDF no es válido")
             from special_pages import validate_special_spec
             special_specs = []
+            recovered_edits = []
+            from photo_edits import validate_edits, has_edits
             for idx, item in enumerate(items, 1):
                 if not isinstance(item, dict):
                     raise ValueError("Entrada de fotografía no válida")
@@ -246,6 +255,9 @@ def recover_sources(pdf_path: Path, folder: Path, progress=None, *, include_spec
                 elif item.get('background_asset') is not None:
                     raise ValueError('Fondo inesperado sin portada')
                 special_specs.append(special)
+                edits = item.get('edits')
+                edits = validate_edits(edits) if edits is not None else None
+                recovered_edits.append(edits if has_edits(edits) else None)
                 if (not isinstance(size, int) or size != entry.file_size
                         or size > MAX_SOURCE_BYTES or size < 1
                         or not isinstance(checksum, str) or len(checksum) != 64
@@ -285,8 +297,13 @@ def recover_sources(pdf_path: Path, folder: Path, progress=None, *, include_spec
             page = pdf.pages[item["page"]]
             sizes.append((float(page.mediabox.width) * 25.4 / 72,
                           float(page.mediabox.height) * 25.4 / 72))
+        edit_specs = {path: edits for path, edits in zip(items_out, recovered_edits) if edits is not None}
+        if include_specials and include_edits:
+            return items_out, sizes, photos_per_page, specs, edit_specs
         if include_specials:
             return items_out, sizes, photos_per_page, specs
+        if include_edits:
+            return items_out, sizes, photos_per_page, edit_specs
         return items_out, sizes, photos_per_page
     except (ValueError, OSError, BadZipFile, json.JSONDecodeError, KeyError):
         for file in staged:

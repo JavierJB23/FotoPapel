@@ -42,6 +42,7 @@ def save_project(
     labels: dict[Path, str], pdf_origins: dict[Path, Path],
     settings: dict, progress: Progress | None = None,
     *, special_pages: dict[Path, dict] | None = None,
+    photo_edits: dict[Path, dict] | None = None,
 ) -> Path:
     """Guarda todo dentro de UN archivo; no depende de rutas originales."""
     paths = list(paths)
@@ -54,6 +55,8 @@ def save_project(
     target.parent.mkdir(parents=True, exist_ok=True)
     from special_pages import validate_special_spec
     special_pages = special_pages or {}
+    photo_edits = photo_edits or {}
+    from photo_edits import validate_edits, has_edits
     records = []
     names = {}
     total_bytes = 0
@@ -88,6 +91,7 @@ def save_project(
             "label": str(labels.get(path, path.name))[:300],
             "kind": "special_page" if path in special_pages else ("pdf_page" if path in pdf_origins else "image"),
             "special": custom_spec,
+            "edits": validate_edits(photo_edits[path]) if path in photo_edits and has_edits(photo_edits[path]) else None,
             "background_asset": background_arc,
             "background_size": background_size,
             "background_sha256": background_sha256,
@@ -155,6 +159,8 @@ def load_project(source: Path, folder: Path, progress: Progress | None = None) -
             labels = {}
             pdf_origins = {}
             special_pages = {}
+            photo_edits = {}
+            from photo_edits import validate_edits, has_edits
             from special_pages import validate_special_spec
             for idx, record in enumerate(records, 1):
                 if not isinstance(record, dict):
@@ -194,6 +200,14 @@ def load_project(source: Path, folder: Path, progress: Progress | None = None) -
                     raise ProjectError(f"No se puede abrir la imagen {idx}") from exc
                 loaded.append(path)
                 labels[path] = label
+                try:
+                    edits = record.get('edits')
+                    if edits is not None:
+                        edits = validate_edits(edits)
+                        if has_edits(edits):
+                            photo_edits[path] = edits
+                except (ValueError, TypeError) as exc:
+                    raise ProjectError('La edición de una fotografía no es válida') from exc
                 if kind == 'special_page':
                     try:
                         spec = dict(record.get('special'))
@@ -254,6 +268,7 @@ def load_project(source: Path, folder: Path, progress: Progress | None = None) -
                 "labels": labels,
                 "pdf_origins": pdf_origins,
                 "special_pages": special_pages,
+                "photo_edits": photo_edits,
                 "settings": settings,
             }
     except (BadZipFile, OSError, json.JSONDecodeError, KeyError) as exc:
