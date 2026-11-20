@@ -12,9 +12,11 @@ DEFAULT = {
     'turns': 0, 'flip_h': False, 'flip_v': False, 'straighten': 0.0,
     'crop': None, 'brightness': 1.0, 'contrast': 1.0,
     'saturation': 1.0, 'sharpness': 1.0, 'auto_correct': False,
+    'print_scale': 1.0,
 }
 LIMITS = {'brightness': (0.2, 2.5), 'contrast': (0.2, 2.5),
-          'saturation': (0.0, 2.5), 'sharpness': (0.0, 3.0)}
+          'saturation': (0.0, 2.5), 'sharpness': (0.0, 3.0),
+          'print_scale': (0.25, 1.5)}
 
 
 def validate_edits(value: dict | None) -> dict:

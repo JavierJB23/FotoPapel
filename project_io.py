@@ -44,6 +44,7 @@ def save_project(
     *, special_pages: dict[Path, dict] | None = None,
     photo_edits: dict[Path, dict] | None = None,
     captions: dict[Path, dict] | None = None,
+    layout_items: dict[Path, dict] | None = None,
 ) -> Path:
     """Guarda todo dentro de UN archivo; no depende de rutas originales."""
     paths = list(paths)
@@ -58,6 +59,8 @@ def save_project(
     special_pages = special_pages or {}
     photo_edits = photo_edits or {}
     captions = captions or {}
+    layout_items = layout_items or {}
+    from layout_editor import validate_layout_item
     from advanced_layout import validate_caption, has_caption
     from photo_edits import validate_edits, has_edits
     records = []
@@ -96,6 +99,7 @@ def save_project(
             "special": custom_spec,
             "edits": validate_edits(photo_edits[path]) if path in photo_edits and has_edits(photo_edits[path]) else None,
             "caption": validate_caption(captions[path]) if path in captions and has_caption(captions[path]) else None,
+            "layout_item": validate_layout_item(layout_items[path]) if path in layout_items else None,
             "background_asset": background_arc,
             "background_size": background_size,
             "background_sha256": background_sha256,
@@ -165,6 +169,8 @@ def load_project(source: Path, folder: Path, progress: Progress | None = None) -
             special_pages = {}
             photo_edits = {}
             captions = {}
+            layout_items = {}
+            from layout_editor import validate_layout_item
             from advanced_layout import validate_caption, has_caption
             from photo_edits import validate_edits, has_edits
             from special_pages import validate_special_spec
@@ -222,6 +228,11 @@ def load_project(source: Path, folder: Path, progress: Progress | None = None) -
                         raise ProjectError('Pie de foto incorrecto') from exc
                     if has_caption(checked):
                         captions[path] = checked
+                if record.get('layout_item') is not None:
+                    try:
+                        layout_items[path] = validate_layout_item(record['layout_item'])
+                    except (TypeError,ValueError) as exc:
+                        raise ProjectError('Geometría del diseño incorrecta') from exc
                 if kind == 'special_page':
                     try:
                         spec = dict(record.get('special'))
@@ -278,6 +289,8 @@ def load_project(source: Path, folder: Path, progress: Progress | None = None) -
                     numbering_position=settings.get('numbering_position', 'Exterior'),
                     numbering_skip_special=settings.get('numbering_skip_special', True),
                     numbering_start=int(settings.get('numbering_start', 1)),
+                    numbering_format=settings.get('numbering_format','1'),
+                    layout_items=layout_items,
                 ).validate()
             except (KeyError, TypeError, ValueError) as exc:
                 raise ProjectError("Los ajustes guardados no son compatibles") from exc
@@ -289,6 +302,7 @@ def load_project(source: Path, folder: Path, progress: Progress | None = None) -
                 "special_pages": special_pages,
                 "photo_edits": photo_edits,
                 "captions": captions,
+                "layout_items": layout_items,
                 "settings": settings,
             }
     except (BadZipFile, OSError, json.JSONDecodeError, KeyError) as exc:

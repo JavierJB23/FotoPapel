@@ -161,6 +161,7 @@ def edit_caption(parent, path: Path, initial: dict | None,
     alignment=tk.StringVar(value=spec.get('align','Centro'))
     title_font=tk.StringVar(value=spec.get('title_font','Georgia'))
     detail_font=tk.StringVar(value=spec.get('detail_font','Georgia'))
+    photo_scale=tk.DoubleVar(value=round(float(spec.get('photo_scale',1.0))*100))
     title_size=tk.StringVar(value=str(spec.get('title_size',14)))
     detail_size=tk.StringVar(value=str(spec.get('detail_size',10)))
     title_color=[spec.get('title_color','#FFFFFF' if placement.get()!='Debajo' else '#253447')]
@@ -211,6 +212,16 @@ def edit_caption(parent, path: Path, initial: dict | None,
             button.configure(bg=chosen,activebackground=chosen,
                              fg='#101F2B' if sum(int(chosen[i:i+2],16) for i in (1,3,5))>380 else '#FFFFFF')
 
+    heading('TAMAÑO DE LA FOTOGRAFÍA EN LA HOJA')
+    tk.Label(body,text='Reduce la foto para dejar espacio a los textos, sin recortar el original.',
+             bg=SURFACE,fg=MUTED,font=('Segoe UI',9)).pack(anchor='w')
+    scale_row=tk.Frame(body,bg=SURFACE)
+    scale_row.pack(fill='x')
+    tk.Scale(scale_row,from_=25,to=100,resolution=1,variable=photo_scale,orient='horizontal',
+             showvalue=False,bg=SURFACE,fg=TEXT,highlightthickness=0,
+             troughcolor=SURFACE_2,activebackground=ACCENT).pack(side='left',fill='x',expand=True)
+    tk.Label(scale_row,textvariable=photo_scale,bg=SURFACE,fg=ACCENT,
+             font=('Segoe UI',10,'bold'),width=5).pack(side='left')
     heading('TÍTULO')
     entry(title)
     heading('DESCRIPCIÓN / LUGAR / FECHA')
@@ -254,7 +265,7 @@ def edit_caption(parent, path: Path, initial: dict | None,
                   'title_font':title_font.get(),'detail_font':detail_font.get(),
                   'title_size':int(title_size.get()),'detail_size':int(detail_size.get()),
                   'title_color':title_color[0],'detail_color':detail_color[0],
-                  'align':alignment.get(),**positions}
+                  'align':alignment.get(),'photo_scale':round(float(photo_scale.get())/100,4),**positions}
             return validate_caption(data)
         except (ValueError,TypeError) as exc:
             messages.showwarning('Texto y pie de foto',f'Revisa el tamaño, posición o color: {exc}',parent=dialog)

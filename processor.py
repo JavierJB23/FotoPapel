@@ -13,7 +13,7 @@ import math
 import re
 
 from PIL import Image, ImageOps, ImageFilter, ImageStat, ImageDraw, UnidentifiedImageError
-from advanced_layout import (TEMPLATES, NUMBER_POSITIONS, validate_caption, has_caption,
+from advanced_layout import (TEMPLATES, NUMBER_POSITIONS, NUMBER_FORMATS, validate_caption, has_caption,
                              template_rects, numbers_for_groups, draw_caption, footer_height_px, draw_page_number)
 
 # Compatibilidad con las fotografías HEIC/HEIF originales del iPhone.
@@ -72,6 +72,9 @@ class ExportOptions:
     numbering_position: str = "Exterior"
     numbering_skip_special: bool = True
     numbering_start: int = 1
+    numbering_format: str = "1"
+    # Geometrías opcionales de fotografías, por imagen; se conservan en .revelo.
+    layout_items: dict[Path, dict] = field(default_factory=dict)
 
     def validate(self) -> None:
         if self.paper not in PAPER_SIZES:
@@ -88,12 +91,16 @@ class ExportOptions:
             raise ValueError("Número de fotos por hoja no reconocido")
         if self.layout_template not in TEMPLATES:
             raise ValueError("Diseño de página no reconocido")
-        if self.layout_template != "Cuadrícula" and self.photos_per_page != 3:
+        if self.layout_template not in ("Cuadrícula", "Diseño libre") and self.photos_per_page != 3:
             raise ValueError("Las plantillas asimétricas requieren 3 fotos por hoja")
         if not isinstance(self.numbering_enabled, bool) or not isinstance(self.numbering_skip_special, bool):
             raise ValueError("Numeración incorrecta")
-        if self.numbering_position not in NUMBER_POSITIONS or not (1 <= self.numbering_start <= 999999):
+        if (self.numbering_position not in NUMBER_POSITIONS or self.numbering_format not in NUMBER_FORMATS
+                or not (1 <= self.numbering_start <= 999999)):
             raise ValueError("Opciones de numeración incorrectas")
+        from layout_editor import validate_layout_item
+        for spec in self.layout_items.values():
+            validate_layout_item(spec)
         for cap in self.captions.values():
             validate_caption(cap)
         from special_pages import validate_special_spec
@@ -363,6 +370,17 @@ def _render_inside(im: Image.Image, size: tuple[int, int], fit: str) -> Image.Im
     return result
 
 
+def _paste_clipped_to_box(dest:Image.Image,src:Image.Image,origin:tuple[int,int],box:tuple[int,int,int,int]):
+    """Pega el zoom dentro de la región, sin tapar otras fotos ni la encuadernación."""
+    ox,oy=origin;x0,y0,x1,y1=box
+    left=max(ox,x0,0);top=max(oy,y0,0)
+    right=min(ox+src.width,x1,dest.width);bottom=min(oy+src.height,y1,dest.height)
+    if right>left and bottom>top:
+        region=src.crop((left-ox,top-oy,right-ox,bottom-oy))
+        try:dest.paste(region,(left,top))
+        finally:region.close()
+
+
 def render_print_image(
     path: Path, opts: ExportOptions, *, preview_max_size: tuple[int, int] | None = None,
     page_index: int = 0,
@@ -396,6 +414,7 @@ def render_print_image(
     working, trimmed_pdf_border = _prepared_photo(path, opts)
     try:
         sw, sh = working.size
+        print_scale=float(opts.photo_edits.get(path,{}).get('print_scale',1.0))
         fill_factor = max(use_w / sw, use_h / sh)
         contain_factor = min(use_w / sw, use_h / sh)
         low_resolution = (fill_factor if opts.fit == "Rellenar (recortar)" else contain_factor) > 1.25
@@ -415,15 +434,39 @@ def render_print_image(
         # es reservar ese espacio libre de contenido legible, no libre de tinta.
         if opts.binding and opts.fit == "Ampliar fondo (sin recortar)":
             full_bleed = _extended_background(working, (out_w, out_h))
-            inside = ImageOps.contain(working, (box[2] - box[0], box[3] - box[1]),
+            inside = ImageOps.contain(working, (max(8,round((box[2]-box[0])*print_scale)),
+                                               max(8,round((box[3]-box[1])*print_scale))),
                                       method=Image.Resampling.LANCZOS)
             try:
                 x = box[0] + ((box[2] - box[0]) - inside.width) // 2
                 y = box[1] + ((box[3] - box[1]) - inside.height) // 2
-                full_bleed.paste(inside, (x, y))
+                _paste_clipped_to_box(full_bleed,inside,(x,y),box)
             finally:
                 inside.close()
             return full_bleed, (w_mm, h_mm), low_resolution
+
+        if abs(print_scale-1.0)>0.002:
+            # Zoom de página: no modifica la fuente ni crea un segundo marco
+            # alrededor de la foto. Los límites se mantienen dentro del área.
+            use_size=(max(8,round((box[2]-box[0])*print_scale)),
+                      max(8,round((box[3]-box[1])*print_scale)))
+            if opts.fit == 'Ampliar fondo (sin recortar)':
+                paper = _extended_background(working,(out_w,out_h))
+                photo=ImageOps.contain(working,use_size,Image.Resampling.LANCZOS)
+                try:
+                    x=round((box[0]+box[2]-photo.width)/2)
+                    y=round((box[1]+box[3]-photo.height)/2)
+                    _paste_clipped_to_box(paper,photo,(x,y),box)
+                finally:photo.close()
+            else:
+                paper=Image.new('RGB',(out_w,out_h),'white')
+                tile=_render_inside(working,use_size,opts.fit)
+                try:
+                    x=round((box[0]+box[2]-tile.width)/2)
+                    y=round((box[1]+box[3]-tile.height)/2)
+                    _paste_clipped_to_box(paper,tile,(x,y),box)
+                finally:tile.close()
+            return paper,(w_mm,h_mm),low_resolution
 
         result_inner = _render_inside(working, (box[2] - box[0], box[3] - box[1]), opts.fit)
         if not opts.binding:
@@ -579,6 +622,67 @@ def _blend_unaltered_photo_into_background(
     alpha.close()
 
 
+def _render_free_sheet(paths: Sequence[Path],opts: ExportOptions,
+                       size:tuple[int,int],physical:tuple[float,float],
+                       safe:tuple[int,int,int,int],page_index:int,
+                       printed_number:int|None):
+    """Collage con posiciones, tamaños y rotaciones individuales.
+
+    Los archivos originales permanecen sin editar; la rotación se efectúa
+    sobre una capa RGBA transparente de la hoja preparada.
+    """
+    from layout_editor import free_default,validate_layout_item
+    out_w,out_h=size
+    w_mm,h_mm=physical
+    if opts.fit=='Ampliar fondo (sin recortar)':
+        prepared,_=_prepared_photo(paths[0],opts)
+        try:sheet=_extended_background(prepared,size)
+        finally:prepared.close()
+    else:sheet=Image.new('RGB',size,'white')
+    x0,y0,x1,y1=safe
+    zone_w=max(1,x1-x0);zone_h=max(1,y1-y0)
+    lowres=False
+    for index,path in enumerate(paths):
+        spec=validate_layout_item(opts.layout_items.get(path))
+        geom=spec.get('rect',free_default(index,len(paths))['rect'])
+        cx,cy,rw,rh=geom
+        bw=max(10,round(zone_w*rw));bh=max(10,round(zone_h*rh))
+        cap=opts.captions.get(path)
+        footer=footer_height_px(bh,out_w/w_mm,cap)
+        img_height=max(10,bh-footer)
+        content,_=_prepared_photo(path,opts)
+        try:
+            sw,sh=content.size
+            scale=(float(cap.get('photo_scale',1.0)) if cap else 1.0)*float(opts.photo_edits.get(path,{}).get('print_scale',1.0))
+            usable=(max(8,round(bw*scale)),max(8,round(img_height*scale)))
+            lowres|=min(usable[0]/sw,usable[1]/sh)>1.25
+            # Rotar una capa transparente ya encajada: las esquinas fuera del
+            # rectángulo no tapan otras fotos ni la hoja de fondo.
+            photo=ImageOps.contain(content,usable,Image.Resampling.LANCZOS).convert('RGBA')
+            try:
+                rotated=photo.rotate(-float(spec.get('angle',0.)),Image.Resampling.BICUBIC,expand=True)
+                try:
+                    px=round(x0+zone_w*cx-rotated.width/2)
+                    py=round(y0+zone_h*cy-footer/2-rotated.height/2)
+                    sheet.paste(rotated,(px,py),rotated)
+                finally:rotated.close()
+            finally:photo.close()
+        finally:content.close()
+        if has_caption(cap):
+            left=round(x0+zone_w*cx-bw/2)
+            top=round(y0+zone_h*cy-bh/2)
+            # La leyenda conserva la orientación horizontal de lectura.
+            # En modo libre superpuesto no se convierte en un cartel opaco.
+            rect=(max(0,left),max(0,top),min(out_w,left+bw),min(out_h,top+bh))
+            if rect[2]>rect[0] and rect[3]>rect[1]:
+                draw_caption(sheet,rect,cap,mode=cap.get('placement','Debajo'),
+                             px_per_mm=out_w/w_mm)
+    draw_page_number(sheet,printed_number,placement=opts.numbering_position,
+                     physical_mm=physical,page_index=page_index,
+                     number_format=opts.numbering_format)
+    return sheet,physical,lowres
+
+
 def render_layout_page(
     paths: Sequence[Path], opts: ExportOptions, *,
     preview_max_size: tuple[int, int] | None = None, page_index: int = 0,
@@ -607,15 +711,15 @@ def render_layout_page(
                              binding=opts.binding, page_index=page_index)
         special_result = render_special_page(opts.special_pages[paths[0]], (out_w, out_h), safe)
         draw_page_number(special_result, printed_number, placement=opts.numbering_position,
-                         physical_mm=(w_mm,h_mm), page_index=page_index)
+                         physical_mm=(w_mm,h_mm), page_index=page_index, number_format=opts.numbering_format)
         return special_result, (w_mm,h_mm), False
     if any(path in opts.special_pages for path in paths):
         raise ValueError("Las portadas y separadores deben ocupar una hoja completa")
-    if opts.photos_per_page == 1 and not has_caption(opts.captions.get(paths[0])):
+    if opts.photos_per_page == 1 and opts.layout_template != "Diseño libre" and not has_caption(opts.captions.get(paths[0])):
         single, phys, lowres = render_print_image(paths[0], opts, preview_max_size=preview_max_size,
                                                    page_index=page_index)
         draw_page_number(single, printed_number, placement=opts.numbering_position,
-                         physical_mm=phys, page_index=page_index)
+                         physical_mm=phys, page_index=page_index, number_format=opts.numbering_format)
         return single, phys, lowres
     if len(paths) > opts.photos_per_page:
         raise ValueError("Demasiadas fotografías para la hoja seleccionada")
@@ -635,10 +739,19 @@ def render_layout_page(
         x0, y0, x1, y1 = margin, margin_y, out_w-margin, out_h-margin_y
     gap_x = max(1, round(out_w * 3 / w_mm))
     gap_y = max(1, round(out_h * 3 / h_mm))
-    template = opts.layout_template if opts.photos_per_page == 3 else "Cuadrícula"
-    cell_rects = template_rects((x0, y0, x1, y1), gap_x, gap_y,
-                                 template=template, count=opts.photos_per_page,
-                                 landscape=w_mm > h_mm)
+    template = (opts.layout_template if opts.photos_per_page == 3 or
+                opts.layout_template == 'Diseño libre' else 'Cuadrícula')
+    if template == 'Diseño libre':
+        return _render_free_sheet(paths,opts,(out_w,out_h),(w_mm,h_mm),
+                                  (x0,y0,x1,y1),page_index,printed_number)
+    if template != 'Cuadrícula' and len(paths) == 3:
+        from layout_editor import editable_template_rects
+        cell_rects = editable_template_rects((x0,y0,x1,y1),gap_x,gap_y,template,
+                                              opts.layout_items.get(paths[0],{}))
+    else:
+        cell_rects = template_rects((x0, y0, x1, y1), gap_x, gap_y,
+                                     template='Cuadrícula', count=opts.photos_per_page,
+                                     landscape=w_mm > h_mm)
     cols, rows = _grid_shape(opts.photos_per_page, w_mm > h_mm)
     if opts.fit == "Ampliar fondo (sin recortar)":
         if template != "Cuadrícula":
@@ -657,44 +770,68 @@ def render_layout_page(
         cx0, cy0, cx1, cy1 = cell_rects[idx]
         cw, ch = cx1 - cx0, cy1 - cy0
         cap = opts.captions.get(path)
+        photo_scale=(float(cap.get('photo_scale',1.0)) if cap else 1.0)*float(opts.photo_edits.get(path,{}).get('print_scale',1.0))
         footer_px = footer_height_px(ch, out_w / w_mm, cap)
         photo_bottom = cy1-footer_px
         photo_ch = photo_bottom-cy0
         if photo_ch < 10:
             raise ValueError("No queda espacio para la foto con ese pie de foto")
         content, _ = _prepared_photo(path, opts)
+        below_caption_start = None
         try:
             sw, sh = content.size
             factor = (max(cw / sw, photo_ch / sh) if opts.fit == "Rellenar (recortar)"
                       else min(cw / sw, photo_ch / sh))
             lowres_any |= factor > 1.25
-            if opts.fit == "Ampliar fondo (sin recortar)":
+            if (cap and cap.get('placement', 'Debajo') == 'Debajo'
+                    and opts.fit == 'Ajustar (sin recortar)'):
+                # Foto y pie como un bloque visual. Evita una franja enorme
+                # entre la imagen centrada y su texto en celdas altas.
+                photo = ImageOps.contain(content, (max(8,round(cw*photo_scale)),
+                                                   max(8,round(photo_ch*photo_scale))),
+                                          method=Image.Resampling.LANCZOS)
+                try:
+                    space=max(3,round(out_w/w_mm * 1.5))
+                    total=photo.height+footer_px+space
+                    top=cy0+max(0,(ch-total)//2)
+                    left=cx0+(cw-photo.width)//2
+                    sheet.paste(photo,(left,top))
+                    below_caption_start=top+photo.height+space
+                finally:
+                    photo.close()
+            elif opts.fit == "Ampliar fondo (sin recortar)":
                 # La propia hoja ya tiene un fondo común; pegar una celda
                 # con su fondo particular crea un rectángulo perfectamente
                 # visible. Solo superponemos la foto nítida y fundimos sus
                 # bordes en el fondo de la hoja.
-                photo = ImageOps.contain(content, (cw, photo_ch),
+                photo = ImageOps.contain(content, (max(8,round(cw*photo_scale)),
+                                                   max(8,round(photo_ch*photo_scale))),
                                           method=Image.Resampling.LANCZOS)
                 try:
                     left = cx0 + (cw - photo.width) // 2
                     top = cy0 + (photo_ch - photo.height) // 2
-                    _blend_unaltered_photo_into_background(
-                        sheet, photo, (left, top, left+photo.width, top+photo.height))
+                    if photo_scale>1:
+                        _paste_clipped_to_box(sheet,photo,(left,top),(cx0,cy0,cx1,photo_bottom))
+                    else:
+                        _blend_unaltered_photo_into_background(
+                            sheet, photo, (left, top, left+photo.width, top+photo.height))
                 finally:
                     photo.close()
             else:
-                tile = _render_inside(content, (cw, photo_ch), opts.fit)
+                tile_w=max(8,round(cw*photo_scale));tile_h=max(8,round(photo_ch*photo_scale))
+                tile = _render_inside(content, (tile_w, tile_h), opts.fit)
                 try:
-                    sheet.paste(tile, (cx0, cy0))
+                    _paste_clipped_to_box(sheet,tile,(cx0+(cw-tile_w)//2,cy0+(photo_ch-tile_h)//2),
+                                           (cx0,cy0,cx1,photo_bottom))
                 finally:
                     tile.close()
         finally:
             content.close()
         draw_caption(sheet, (cx0,cy0,cx1,cy1), cap,
                      mode=cap.get("placement", "Debajo") if cap else "Debajo",
-                     px_per_mm=out_w/w_mm)
+                     px_per_mm=out_w/w_mm, below_start_y=below_caption_start)
     draw_page_number(sheet, printed_number, placement=opts.numbering_position,
-                     physical_mm=(w_mm,h_mm), page_index=page_index)
+                     physical_mm=(w_mm,h_mm), page_index=page_index, number_format=opts.numbering_format)
     return sheet, (w_mm, h_mm), lowres_any
 
 
@@ -805,7 +942,8 @@ def export_pdf(paths: Sequence[Path], opts: ExportOptions, target: Path, progres
         from pdf_sources import attach_sources
         attach_sources(target, list(paths), opts.photos_per_page, opts.pdf_page_paths,
                        special_pages=opts.special_pages, photo_edits=opts.photo_edits,
-                       captions=opts.captions, layout_template=opts.layout_template)
+                       captions=opts.captions, layout_template=opts.layout_template,
+                       layout_items=opts.layout_items)
         if progress:
             progress(len(groups), len(groups), "Originales incluidos en el PDF")
     except Exception:

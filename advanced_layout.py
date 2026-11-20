@@ -11,9 +11,11 @@ TEMPLATES = (
     "Grande arriba + 2 abajo",
     "Grande izquierda + 2 derecha",
     "2 arriba + grande abajo",
+    "Diseño libre",
 )
 TEMPLATE_PHOTOS = 3
 NUMBER_POSITIONS = ("Exterior", "Centro", "Izquierda", "Derecha")
+NUMBER_FORMATS = ("1", "-1-", "[1]", "(1)", "· 1 ·")
 CAPTION_PLACEMENTS = ("Debajo", "Sobre foto", "Personalizado")
 CAPTION_ALIGNMENTS = ("Izquierda", "Centro", "Derecha")
 
@@ -54,6 +56,11 @@ def validate_caption(spec: dict | None) -> dict:
         if spec["align"] not in CAPTION_ALIGNMENTS:
             raise ValueError("Alineación del pie de foto desconocida")
         clean["align"] = spec["align"]
+    if "photo_scale" in spec:
+        val=spec["photo_scale"]
+        if isinstance(val,bool) or not isinstance(val,(int,float)) or not .25 <= val <= 1.0:
+            raise ValueError("Escala de fotografía fuera de rango")
+        clean["photo_scale"]=round(float(val),4)
     for key in ("title_x", "title_y", "detail_x", "detail_y"):
         if key in spec:
             val = spec[key]
@@ -72,10 +79,12 @@ def template_rects(box: tuple[int, int, int, int], gap_x: int, gap_y: int,
     """Rectángulos físicos con huecos; usa proporciones para mosaicos de tres fotos."""
     if template not in TEMPLATES:
         raise ValueError("Plantilla de composición desconocida")
-    if template != "Cuadrícula" and count != 3:
+    if template not in ("Cuadrícula", "Diseño libre") and count != 3:
         raise ValueError("Las composiciones asimétricas necesitan tres fotografías")
     x0, y0, x1, y1 = box
     width, height = x1 - x0, y1 - y0
+    if template == "Diseño libre":
+        template = "Cuadrícula"  # Fallback; dibujo libre está en processor.
     if template == "Grande arriba + 2 abajo":
         midx = x0 + (width - gap_x) // 2
         midy = y0 + round((height - gap_y) * 0.60)
@@ -285,17 +294,21 @@ def draw_caption(sheet: Image.Image, rect: tuple[int,int,int,int], spec: dict | 
 
 
 def draw_page_number(sheet: Image.Image, number: int | None, *,
-                     placement: str, physical_mm: tuple[float,float], page_index: int) -> None:
+                     placement: str, physical_mm: tuple[float,float], page_index: int,
+                     number_format: str = "1") -> None:
     if number is None:
         return
     if placement not in NUMBER_POSITIONS:
         raise ValueError("Posición de numeración no reconocida")
+    if number_format not in NUMBER_FORMATS:
+        raise ValueError("Formato de numeración no reconocido")
     w_mm,h_mm = physical_mm
     w,h = sheet.size
     scale = w/w_mm
     font=_font(max(11, round(scale*3.0)), bold=True)
     drawing=ImageDraw.Draw(sheet)
-    label=str(number)
+    label={"1":str(number),"-1-":f"-{number}-","[1]":f"[{number}]",
+           "(1)":f"({number})","· 1 ·":f"· {number} ·"}[number_format]
     tw=round(drawing.textlength(label,font=font))
     px_margin=max(5,round(scale*6))
     if placement == "Centro":
@@ -307,12 +320,17 @@ def draw_page_number(sheet: Image.Image, number: int | None, *,
     else:
         center_x=px_margin+tw//2
     middle_y=h-max(round(scale*5.2),13)
-    textbox=drawing.textbbox((0,0), label, font=font)
-    box_w=max(25,tw+round(scale*4))
-    box_h=max(22,textbox[3]-textbox[1]+round(scale*2.5))
-    x0=max(1,min(w-box_w-1,center_x-box_w//2))
-    y0=max(1,min(h-box_h-1,middle_y-box_h//2))
-    drawing.rounded_rectangle((x0,y0,x0+box_w,y0+box_h),radius=max(3,round(scale)),
-                              fill=(246,239,223),outline=(175,183,179),width=max(1,round(scale*.2)))
-    drawing.text((x0+(box_w-tw)//2, y0+(box_h-(textbox[3]-textbox[1]))//2-textbox[1]),
-                 label, fill=(23,49,64),font=font)
+    # Numeración impresa directamente sobre el papel, sin pastilla de fondo.
+    bbox=drawing.textbbox((0,0),label,font=font)
+    tw=bbox[2]-bbox[0]
+    text_x=max(3,min(w-tw-3,round(center_x-tw/2)))
+    baseline_y=h-max(round(scale*5.2),13)
+    text_y=max(2,min(h-(bbox[3]-bbox[1])-2,round(baseline_y-(bbox[3]-bbox[1])/2-bbox[1])))
+    # Sin cajita: contraste automático para que se lea también sobre fotos oscuras.
+    crop=sheet.crop((max(0,text_x),max(0,text_y),min(w,text_x+tw),
+                     min(h,text_y+max(9,bbox[3]-bbox[1]))))
+    from PIL import ImageStat
+    lightness=ImageStat.Stat(crop.convert('L')).mean[0]
+    crop.close()
+    drawing.text((text_x,text_y),label,
+                 fill=(249,249,246) if lightness<118 else (23,49,64),font=font)

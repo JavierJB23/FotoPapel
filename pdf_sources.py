@@ -32,7 +32,8 @@ def _make_bundle(paths: list[Path], photos_per_page: int,
                  special_pages: dict[Path, dict] | None = None,
                  photo_edits: dict[Path, dict] | None = None,
                  captions: dict[Path, dict] | None = None,
-                 layout_template: str = "Cuadrícula") -> bytes:
+                 layout_template: str = "Cuadrícula",
+                 layout_items: dict[Path,dict] | None = None) -> bytes:
     if not paths or len(paths) > MAX_IMAGES:
         raise ValueError("Demasiadas imágenes para guardar sus originales en el PDF")
     from processor import page_groups
@@ -40,6 +41,8 @@ def _make_bundle(paths: list[Path], photos_per_page: int,
     special_pages = special_pages or {}
     photo_edits = photo_edits or {}
     captions = captions or {}
+    layout_items = layout_items or {}
+    from layout_editor import validate_layout_item
     from advanced_layout import TEMPLATES, validate_caption, has_caption
     if layout_template not in TEMPLATES:
         raise ValueError("Plantilla de PDF no válida")
@@ -120,6 +123,7 @@ def _make_bundle(paths: list[Path], photos_per_page: int,
                           "special": special_spec,
                           "edits": validate_edits(photo_edits[path]) if path in photo_edits and has_edits(photo_edits[path]) else None,
                           "caption": validate_caption(captions[path]) if path in captions and has_caption(captions[path]) else None,
+                          "layout_item": validate_layout_item(layout_items[path]) if path in layout_items else None,
                           "sha256": checksum.hexdigest(), "size": size,
                           "recovered_from_flat_pdf": path in pdf_page_paths,
                           **bg_meta})
@@ -134,7 +138,8 @@ def attach_sources(pdf_path: Path, paths: list[Path], photos_per_page: int,
                    special_pages: dict[Path, dict] | None = None,
                    photo_edits: dict[Path, dict] | None = None,
                    captions: dict[Path, dict] | None = None,
-                   layout_template: str = "Cuadrícula") -> None:
+                   layout_template: str = "Cuadrícula",
+                   layout_items: dict[Path,dict] | None = None) -> None:
     """Inserta fuentes originales en un PDF sin modificar sus páginas visibles.
 
     Operación segura: el PDF existente solo se sustituye si la copia revisada
@@ -145,7 +150,7 @@ def attach_sources(pdf_path: Path, paths: list[Path], photos_per_page: int,
     pdf_path = Path(pdf_path)
     content = _make_bundle(paths, photos_per_page, pdf_page_paths, special_pages=special_pages,
                            photo_edits=photo_edits, captions=captions,
-                           layout_template=layout_template)
+                           layout_template=layout_template, layout_items=layout_items)
     writer = PdfWriter()
     reader = PdfReader(str(pdf_path), strict=False)
     writer.append(reader)
@@ -170,7 +175,8 @@ def attach_sources(pdf_path: Path, paths: list[Path], photos_per_page: int,
 
 
 def recover_sources(pdf_path: Path, folder: Path, progress=None, *, include_specials: bool = False,
-                    include_edits: bool = False, include_captions: bool = False):
+                    include_edits: bool = False, include_captions: bool = False,
+                    include_layout: bool = False):
     """Devuelve (paths, pages, per_sheet); opcionalmente también portadas.
 
     Si no hay adjunto devuelve None, para permitir importación clásica. Los
@@ -204,6 +210,10 @@ def recover_sources(pdf_path: Path, folder: Path, progress=None, *, include_spec
                 raise ValueError("Versión de fotos originales no compatible")
             items = manifest.get("items")
             photos_per_page = manifest.get("photos_per_page")
+            from advanced_layout import TEMPLATES
+            recovered_template=manifest.get("layout_template","Cuadrícula")
+            if recovered_template not in TEMPLATES:
+                recovered_template="Cuadrícula"
             if (not isinstance(items, list) or not 0 < len(items) <= MAX_IMAGES
                     or photos_per_page not in (1, 2, 3, 4, 6, 9)
                     or len(info) != len(items) + 1 + sum(bool(i.get('background_asset')) for i in items if isinstance(i, dict))):
@@ -212,6 +222,7 @@ def recover_sources(pdf_path: Path, folder: Path, progress=None, *, include_spec
             special_specs = []
             recovered_edits = []
             recovered_captions = []
+            recovered_layout_items = []
             from advanced_layout import validate_caption, has_caption
             from photo_edits import validate_edits, has_edits
             for idx, item in enumerate(items, 1):
@@ -273,6 +284,9 @@ def recover_sources(pdf_path: Path, folder: Path, progress=None, *, include_spec
                 raw_cap = item.get('caption')
                 cap = validate_caption(raw_cap) if raw_cap is not None else None
                 recovered_captions.append(cap if has_caption(cap) else None)
+                from layout_editor import validate_layout_item
+                raw_layout=item.get('layout_item')
+                recovered_layout_items.append(validate_layout_item(raw_layout) if raw_layout else None)
                 if (not isinstance(size, int) or size != entry.file_size
                         or size > MAX_SOURCE_BYTES or size < 1
                         or not isinstance(checksum, str) or len(checksum) != 64
@@ -314,6 +328,9 @@ def recover_sources(pdf_path: Path, folder: Path, progress=None, *, include_spec
                           float(page.mediabox.height) * 25.4 / 72))
         edit_specs = {path: edits for path, edits in zip(items_out, recovered_edits) if edits is not None}
         cap_specs = {path: cap for path, cap in zip(items_out, recovered_captions) if cap is not None}
+        layout_specs = {path: data for path,data in zip(items_out,recovered_layout_items) if data is not None}
+        if include_specials and include_edits and include_captions and include_layout:
+            return items_out, sizes, photos_per_page, specs, edit_specs, cap_specs, layout_specs, recovered_template
         if include_specials and include_edits and include_captions:
             return items_out, sizes, photos_per_page, specs, edit_specs, cap_specs
         if include_specials and include_edits:

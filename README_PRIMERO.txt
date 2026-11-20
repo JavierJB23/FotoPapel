@@ -1,3 +1,67 @@
+REVELO v1.7.2 — DISEÑO LIBRE, TAMAÑOS Y NUMERACIÓN
+====================================================
+
+ESTADO: CANDIDATA A STABLE. Conserva Revelo v1.6.2 STABLE/FROZEN intacto.
+
+NOVEDADES DE ESTA ACTUALIZACIÓN
+
+1. TAMAÑO DE FOTO Y PIE DE TEXTO
+   En «Editar foto», bajo «TAMAÑO DE FOTO EN LA HOJA», puedes elegir una escala
+   de impresión de 0,25 a 1,50. La edición del original sigue siendo reversible.
+   En «Texto / pie de foto» aparece «Tamaño de la fotografía en la hoja»,
+   con control entre 25 % y 100 %. Reduce la foto manteniendo su proporción
+   y sin tocar el archivo original; conserva el texto, fuente y color.
+
+2. TAMAÑO DE FOTOS EN LAS PLANTILLAS DE 3
+   La caja «Diseño» es más compacta. Con cualquier diseño irregular
+   de tres fotos se habilita el botón «Tamaño de fotos» en la misma fila.
+   Se abre la hoja: selecciona una imagen y cambia el reparto de espacio
+   mediante la barra o rueda. La estructura (grande arriba, izquierda,
+   o abajo) se mantiene. El ajuste solo afecta a esa hoja.
+
+3. DISEÑO LIBRE
+   Selecciona «Diseño libre» en el desplegable, con 1, 2, 3, 4, 6 o 9
+   fotos por hoja, y pulsa «Editar diseño libre». En el editor:
+     - Clic sobre una fotografía para seleccionarla.
+     - Arrastra para moverla; usa el cuadrado aguamarina para redimensionar.
+     - Rueda para cambiar su tamaño; Mayúsculas + rueda para girarla.
+     - Usa el control «Giro» si quieres un ángulo concreto.
+     - Puedes colocar y superponer imágenes libremente.
+   Las transformaciones son no destructivas y se conservan al exportar.
+
+4. NUMERACIÓN SIN RECUADROS
+   En «Numeración…» hay dos cajas compactas en la misma línea: Posición
+   y Formato. Opciones: 1, -1-, [1], (1), · 1 ·. No se dibuja ya ninguna
+   pastilla beige alrededor del número. El color se adapta a fondos
+   claros u oscuros.
+
+5. CONSERVACIÓN DE LOS DISEÑOS
+   Se guardan giros, tamaños y posiciones dentro de los proyectos .revelo
+   y en los PDF reversibles. Las composiciones se pueden modificar luego.
+   Al reimportar un PDF reversible completo, Revelo recupera también
+   su modo de composición cuando se abre en una biblioteca vacía.
+
+INSTALACIÓN
+
+1. Descarga y descomprime Revelo_v1_7_2_ACTUALIZACION.zip.
+2. En github.com/JavierJB23/FotoPapel pulsa Add file > Upload files.
+3. Sube los archivos, respetando la carpeta tests. El nuevo archivo
+   layout_editor.py va en la raíz, junto a main.py.
+4. Pulsa Commit changes y entra en Actions.
+5. Descarga Revelo-Windows-CARPETA cuando la compilación esté en verde.
+6. Descomprime y conserva juntos Revelo.exe y todos sus componentes.
+   No hace falta cambiar el workflow ni instalar Python.
+
+PRUEBA SUGERIDA
+
+- Carga 4 fotos. Selecciona «Diseño libre» y 4 fotos por hoja.
+- Pulsa «Editar diseño libre»; mueve, agranda y gira una fotografía.
+- En «Texto / pie de foto» cambia el tamaño de otra fotografía.
+- Activa numeración [1] y comprueba que no se ve ningún recuadro.
+- Exporta PDF y Word. Guarda y vuelve a abrir un proyecto .revelo.
+
+--------------------------------------------------------------------
+
 REVELO v1.7.1 — REFINADO DE PIES DE FOTO Y LIBRO
 ================================
 
