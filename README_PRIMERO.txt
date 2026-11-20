@@ -1,57 +1,80 @@
-REVELO v1.6.2 — FIX DE RECORTE, MINIATURAS Y GUÍAS DE ALINEACIÓN
-=================================================================
+REVELO v1.7 — MAQUETACIÓN AVANZADA
+================================
 
-NOVEDADES
+ESTADO: CANDIDATA A STABLE. Conservar Revelo v1.6.2 STABLE/FROZEN aparte.
 
-1) EDITOR FOTOGRÁFICO — BOTÓN «RECORTAR»
-   - Aparece a la izquierda de «Original (mantener)» y «Ver resultado».
-   - Sin una selección nueva está desactivado; cuando dibujas o modificas el
-     rectángulo de recorte se ilumina en crema.
-   - Al pulsar «Recortar» muestra inmediatamente la foto ya recortada.
-   - «Modificar recorte» permite volver a ajustar los límites.
-   - Los originales siguen intactos: confirma al pulsar «Guardar edición».
+NUEVAS FUNCIONES
 
-2) ORIENTACIÓN SINCRONIZADA EN TODAS LAS VISTAS
-   - Las miniaturas de «Fotos y PDF cargados» y de «Orden del contenido»
-     reflejan la orientación del papel actual (horizontal/vertical/automática).
-   - El refresco ocurre al cambiar orientación, formato de papel, encaje o
-     márgenes. No hace falta cerrar ni volver a abrir ninguna foto.
-   - Las miniaturas se procesan en resolución reducida para no ralentizar
-     los documentos con decenas de fotos; el PDF/Word usa resolución completa.
-   - También respeta las portadas personalizadas y las ediciones fotográficas.
+1. ARRASTRAR ARCHIVOS DESDE WINDOWS
+   Arrastra uno o varios JPG, PNG, HEIC, HEIF, TIFF, WEBP, BMP o PDF
+   directamente sobre la ventana o el panel de carga. También puedes
+   arrastrar una carpeta: importa las fotografías y PDF de ese nivel.
+   La importación sigue el mismo proceso local que el botón «Añadir».
+   El arrastre desde el Explorador requiere la versión de Windows compilada
+   con TkinterDnD2 (ya incluida en los requisitos y en GitHub Actions).
 
-3) GUÍAS DE ALINEACIÓN MAGNÉTICAS EN PORTADAS/SEPARADORES
-   - Al mover texto o foto por el editor personalizado aparecen líneas
-     aguamarina al acercarse a los ejes centrales y a los bordes de la hoja.
-   - Existe una pequeña zona de atracción y retención de unos 22 píxeles
-     al abandonar cada guía. Así se puede colocar con precisión.
-   - Las líneas desaparecen cuando sueltas el ratón; NO se imprimen.
-   - No afecta a las posiciones ya guardadas ni a los archivos antiguos.
+2. NUMERACIÓN AUTOMÁTICA
+   El botón «Numeración...» permite activar/desactivar números, elegir
+   posición (exterior, centro, izquierda o derecha), número inicial y
+   omisión de portadas y separadores. Los números se generan en la hoja,
+   no en los archivos originales. Respeta la posición física de la hoja.
 
-INSTALAR EN WINDOWS (COMO SIEMPRE)
+3. VISTA DE LIBRO ABIERTO
+   En «Previsualización» pulsa «Libro abierto». La primera página aparece
+   sola a la derecha; después se muestran pares izquierda/derecha.
+   «Página única» recupera la vista anterior. No modifica el PDF ni imprime
+   hojas dobles: es una simulación para revisar un álbum encuadernado.
 
-1. Conserva una copia de tu ejecutable anterior estable.
-2. En tu repositorio GitHub de Revelo (JavierJB23/FotoPapel), sube
-   los archivos de la actualización sobre los anteriores.
-3. Los nuevos alignment_guides.py y thumbnail_preview.py van en la raíz
-   junto a main.py; test_v162_usability.py va dentro de tests/.
-4. Pulsa Commit changes y entra en Actions.
-5. Descarga Revelo-Windows-EXE cuando la compilación termine en verde,
-   descomprime el ZIP y abre Revelo.exe.
+4. COMPOSICIONES ASIMÉTRICAS
+   En «FOTOS POR HOJA», selecciona 3. En «DISEÑO» escoge:
+      - Cuadrícula (igualitaria)
+      - Grande arriba + 2 abajo
+      - Grande izquierda + 2 derecha
+      - 2 arriba + grande abajo
+   Al seleccionar un diseño asimétrico se seleccionan automáticamente
+   tres fotografías por hoja. Los diseños de 1, 2, 4, 6 y 9 fotos siguen
+   funcionando exactamente como antes.
 
-No cambian las dependencias ni el archivo .github/workflows/windows-exe.yml.
-No se necesita instalar Python, ni modificar el QR, ni pagar licencias.
+5. TEXTOS Y PIES DE FOTO
+   Cada foto tiene un botón «Texto / pie de foto». Añade un título, una
+   descripción/lugar/fecha y elige «Debajo» o «Sobre foto».
+   Los textos se añaden solo a la impresión, nunca a las imágenes fuente.
+   Puedes borrarlos vaciando ambos campos.
 
-PRUEBA RECOMENDADA
-- Arrastra un recorte: confirma que «Recortar» se ilumina en crema;
-  púlsalo, comprueba la imagen sin la zona descartada y, si quieres,
-  usa «Modificar recorte».
-- Abre una portada horizontal; cambia a vertical en el menú principal y
-  comprueba que las miniaturas de ambos paneles se actualizan.
-- En «Personalizar portada», selecciona título/foto; al acercarla al eje
-  horizontal o vertical aparecerá la guía aguamarina. Suelta y verifica
-  que la línea no aparece en la exportación.
+COMPATIBILIDAD
 
-CHECKPOINT
-Versión candidata: Revelo v1.6.2. Conserva la versión STABLE anterior
-hasta validar este nuevo EXE en tu ordenador.
+- Los ajustes de numeración, diseño y pies de foto se guardan en .revelo.
+- Las fotos originales siguen incluidas en proyectos y PDF reversibles.
+- Al reimportar un PDF reversible de v1.7 se recuperan también sus pies
+  de foto. Los PDF antiguos continúan siendo compatibles.
+- Portadas y separadores siguen ocupando su hoja independiente.
+- QR, edición fotográfica, Word, PDF y márgenes siguen disponibles.
+- Todas las funciones trabajan localmente. Sin anuncios ni suscripción.
+
+INSTALACIÓN EN WINDOWS (GRATIS)
+
+1. Conserva tu copia de Revelo v1.6.2 STABLE/FROZEN sin reemplazar.
+2. En github.com/JavierJB23/FotoPapel pulsa Add file > Upload files.
+3. Sube los archivos de Revelo_v1_7_ACTUALIZACION.zip descomprimidos.
+   advanced_layout.py debe quedar junto a main.py.
+   test_v17_advanced.py debe quedar dentro de la carpeta tests/.
+4. Pulsa Commit changes. Abre la pestaña Actions.
+5. Descarga Revelo-Windows-CARPETA si el workflow acaba en verde.
+6. Descomprime el ZIP, conserva toda la carpeta y abre Revelo.exe.
+   No extraigas solo el ejecutable: necesita los componentes adyacentes.
+
+El workflow del repositorio ya utiliza PyInstaller --onedir. No necesitas
+cambiarlo ni instalar Python. El ZIP completo incorpora una copia de
+la configuración de compilación por si la necesitas alguna vez.
+
+PRUEBAS SUGERIDAS ANTES DE DECLARAR STABLE
+
+- Arrastra al panel seis fotos y un PDF desde el Explorador.
+- Elige «Grande arriba + 2 abajo» y revisa las dos hojas resultantes.
+- Añade pies a dos fotos y activa «Numeración» omitiendo una portada.
+- Abre «Libro abierto», avanza y vuelve a «Página única».
+- Exporta PDF y Word y revisa la maquetación.
+- Guarda un proyecto .revelo, ciérralo y vuelve a abrirlo: deben regresar
+  el diseño elegido, el orden, las leyendas y los ajustes de numeración.
+
+REVELO v1.6.2 STABLE/FROZEN permanece como referencia segura.

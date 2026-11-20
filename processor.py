@@ -13,6 +13,8 @@ import math
 import re
 
 from PIL import Image, ImageOps, ImageFilter, ImageStat, ImageDraw, UnidentifiedImageError
+from advanced_layout import (TEMPLATES, NUMBER_POSITIONS, validate_caption, has_caption,
+                             template_rects, numbers_for_groups, draw_caption, footer_height_px, draw_page_number)
 
 # Compatibilidad con las fotografías HEIC/HEIF originales del iPhone.
 try:
@@ -64,6 +66,12 @@ class ExportOptions:
     photos_per_page: int = 1  # 1, 2, 4, 6 o 9; 1 conserva el funcionamiento de v1.3
     special_pages: dict[Path, dict] = field(default_factory=dict)  # portadas, títulos, hojas en blanco
     photo_edits: dict[Path, dict] = field(default_factory=dict)  # cambios no destructivos
+    layout_template: str = "Cuadrícula"
+    captions: dict[Path, dict] = field(default_factory=dict)
+    numbering_enabled: bool = False
+    numbering_position: str = "Exterior"
+    numbering_skip_special: bool = True
+    numbering_start: int = 1
 
     def validate(self) -> None:
         if self.paper not in PAPER_SIZES:
@@ -76,8 +84,18 @@ class ExportOptions:
             raise ValueError("Los PPP deben estar entre 72 y 600")
         if not isinstance(self.binding, bool):
             raise ValueError("Márgenes de encuadernación no reconocidos")
-        if self.photos_per_page not in (1, 2, 4, 6, 9):
+        if self.photos_per_page not in (1, 2, 3, 4, 6, 9):
             raise ValueError("Número de fotos por hoja no reconocido")
+        if self.layout_template not in TEMPLATES:
+            raise ValueError("Diseño de página no reconocido")
+        if self.layout_template != "Cuadrícula" and self.photos_per_page != 3:
+            raise ValueError("Las plantillas asimétricas requieren 3 fotos por hoja")
+        if not isinstance(self.numbering_enabled, bool) or not isinstance(self.numbering_skip_special, bool):
+            raise ValueError("Numeración incorrecta")
+        if self.numbering_position not in NUMBER_POSITIONS or not (1 <= self.numbering_start <= 999999):
+            raise ValueError("Opciones de numeración incorrectas")
+        for cap in self.captions.values():
+            validate_caption(cap)
         from special_pages import validate_special_spec
         for spec in self.special_pages.values():
             validate_special_spec(spec)
@@ -423,7 +441,7 @@ def render_print_image(
 def page_groups(paths: Sequence[Path], per_page: int,
                 special_pages: dict[Path, dict] | None = None) -> list[tuple[Path, ...]]:
     """Agrupa fotos, pero una portada/separador ocupa siempre su hoja entera."""
-    if per_page not in (1, 2, 4, 6, 9):
+    if per_page not in (1, 2, 3, 4, 6, 9):
         raise ValueError("Número de fotos por hoja no reconocido")
     specials = special_pages or {}
     groups: list[tuple[Path, ...]] = []
@@ -449,6 +467,8 @@ def _grid_shape(count: int, landscape: bool) -> tuple[int, int]:
         return (2, 1) if landscape else (1, 2)
     if count == 6:
         return (3, 2) if landscape else (2, 3)
+    if count == 3:
+        return (3, 1) if landscape else (1, 3)
     side = {4: 2, 9: 3}.get(count, 1)
     return side, side
 
@@ -562,6 +582,7 @@ def _blend_unaltered_photo_into_background(
 def render_layout_page(
     paths: Sequence[Path], opts: ExportOptions, *,
     preview_max_size: tuple[int, int] | None = None, page_index: int = 0,
+    printed_number: int | None = None,
 ) -> tuple[Image.Image, tuple[float, float], bool]:
     """Renderiza una hoja con todas las fotografías indicadas.
 
@@ -584,12 +605,18 @@ def render_layout_page(
             out_w, out_h = max(1, round(out_w*scale)), max(1, round(out_h*scale))
         safe = printable_box((out_w, out_h), (w_mm, h_mm),
                              binding=opts.binding, page_index=page_index)
-        return render_special_page(opts.special_pages[paths[0]], (out_w, out_h), safe), (w_mm,h_mm), False
+        special_result = render_special_page(opts.special_pages[paths[0]], (out_w, out_h), safe)
+        draw_page_number(special_result, printed_number, placement=opts.numbering_position,
+                         physical_mm=(w_mm,h_mm), page_index=page_index)
+        return special_result, (w_mm,h_mm), False
     if any(path in opts.special_pages for path in paths):
         raise ValueError("Las portadas y separadores deben ocupar una hoja completa")
-    if opts.photos_per_page == 1:
-        return render_print_image(paths[0], opts, preview_max_size=preview_max_size,
-                                  page_index=page_index)
+    if opts.photos_per_page == 1 and not has_caption(opts.captions.get(paths[0])):
+        single, phys, lowres = render_print_image(paths[0], opts, preview_max_size=preview_max_size,
+                                                   page_index=page_index)
+        draw_page_number(single, printed_number, placement=opts.numbering_position,
+                         physical_mm=phys, page_index=page_index)
+        return single, phys, lowres
     if len(paths) > opts.photos_per_page:
         raise ValueError("Demasiadas fotografías para la hoja seleccionada")
     w_mm, h_mm = dimensions_mm(paths[0], opts)
@@ -606,61 +633,68 @@ def render_layout_page(
         margin = max(1, round(out_w * 3 / w_mm))
         margin_y = max(1, round(out_h * 3 / h_mm))
         x0, y0, x1, y1 = margin, margin_y, out_w-margin, out_h-margin_y
-    cols, rows = _grid_shape(opts.photos_per_page, w_mm > h_mm)
     gap_x = max(1, round(out_w * 3 / w_mm))
     gap_y = max(1, round(out_h * 3 / h_mm))
-    usable_w = x1 - x0 - (cols - 1) * gap_x
-    usable_h = y1 - y0 - (rows - 1) * gap_y
-    if usable_w < cols or usable_h < rows:
-        raise ValueError("El papel es demasiado pequeño para esta distribución")
-    # Calculamos todas las celdas antes de dibujar: el fondo extendido puede
-    # ocupar la hoja entera, pero las fotos siguen limitadas a estas celdas.
-    cell_rects = []
-    for slot in range(cols * rows):
-        col, row = slot % cols, slot // cols
-        cx0 = x0 + (col * usable_w // cols) + col * gap_x
-        cx1 = x0 + ((col + 1) * usable_w // cols) + col * gap_x
-        cy0 = y0 + (row * usable_h // rows) + row * gap_y
-        cy1 = y0 + ((row + 1) * usable_h // rows) + row * gap_y
-        cell_rects.append((cx0, cy0, cx1, cy1))
-
+    template = opts.layout_template if opts.photos_per_page == 3 else "Cuadrícula"
+    cell_rects = template_rects((x0, y0, x1, y1), gap_x, gap_y,
+                                 template=template, count=opts.photos_per_page,
+                                 landscape=w_mm > h_mm)
+    cols, rows = _grid_shape(opts.photos_per_page, w_mm > h_mm)
     if opts.fit == "Ampliar fondo (sin recortar)":
-        sheet = _extended_layout_background(paths, opts, (out_w, out_h),
-                                            cell_rects, cols, rows)
+        if template != "Cuadrícula":
+            first, _ = _prepared_photo(paths[0], opts)
+            try:
+                sheet = _extended_background(first, (out_w, out_h))
+            finally:
+                first.close()
+        else:
+            sheet = _extended_layout_background(paths, opts, (out_w, out_h),
+                                                cell_rects, cols, rows)
     else:
         sheet = Image.new("RGB", (out_w, out_h), "white")
     lowres_any = False
     for idx, path in enumerate(paths):
         cx0, cy0, cx1, cy1 = cell_rects[idx]
         cw, ch = cx1 - cx0, cy1 - cy0
+        cap = opts.captions.get(path)
+        footer_px = footer_height_px(ch, out_w / w_mm, cap)
+        photo_bottom = cy1-footer_px
+        photo_ch = photo_bottom-cy0
+        if photo_ch < 10:
+            raise ValueError("No queda espacio para la foto con ese pie de foto")
         content, _ = _prepared_photo(path, opts)
         try:
             sw, sh = content.size
-            factor = (max(cw / sw, ch / sh) if opts.fit == "Rellenar (recortar)"
-                      else min(cw / sw, ch / sh))
+            factor = (max(cw / sw, photo_ch / sh) if opts.fit == "Rellenar (recortar)"
+                      else min(cw / sw, photo_ch / sh))
             lowres_any |= factor > 1.25
             if opts.fit == "Ampliar fondo (sin recortar)":
                 # La propia hoja ya tiene un fondo común; pegar una celda
                 # con su fondo particular crea un rectángulo perfectamente
                 # visible. Solo superponemos la foto nítida y fundimos sus
                 # bordes en el fondo de la hoja.
-                photo = ImageOps.contain(content, (cw, ch),
+                photo = ImageOps.contain(content, (cw, photo_ch),
                                           method=Image.Resampling.LANCZOS)
                 try:
                     left = cx0 + (cw - photo.width) // 2
-                    top = cy0 + (ch - photo.height) // 2
+                    top = cy0 + (photo_ch - photo.height) // 2
                     _blend_unaltered_photo_into_background(
                         sheet, photo, (left, top, left+photo.width, top+photo.height))
                 finally:
                     photo.close()
             else:
-                tile = _render_inside(content, (cw, ch), opts.fit)
+                tile = _render_inside(content, (cw, photo_ch), opts.fit)
                 try:
                     sheet.paste(tile, (cx0, cy0))
                 finally:
                     tile.close()
         finally:
             content.close()
+        draw_caption(sheet, (cx0,cy0,cx1,cy1), cap,
+                     mode=cap.get("placement", "Debajo") if cap else "Debajo",
+                     px_per_mm=out_w/w_mm)
+    draw_page_number(sheet, printed_number, placement=opts.numbering_position,
+                     physical_mm=(w_mm,h_mm), page_index=page_index)
     return sheet, (w_mm, h_mm), lowres_any
 
 
@@ -717,8 +751,12 @@ def export_images(paths: Sequence[Path], opts: ExportOptions, dest: Path, progre
     folder.mkdir()
     lowres_count = 0
     groups = page_groups(paths, opts.photos_per_page, opts.special_pages)
+    numbers = numbers_for_groups(groups, opts.special_pages,
+                                 enabled=opts.numbering_enabled, start=opts.numbering_start,
+                                 skip_special=opts.numbering_skip_special)
     for i, group in enumerate(groups, 1):
-        rendered, _, lowres = render_layout_page(group, opts, page_index=i - 1)
+        rendered, _, lowres = render_layout_page(group, opts, page_index=i - 1,
+                                                 printed_number=numbers[i-1])
         lowres_count += int(lowres)
         if opts.photos_per_page == 1 and group[0] not in opts.special_pages:
             out_base = _safe_basename(f"{i:02d}_{group[0].stem}_{label}")
@@ -745,8 +783,12 @@ def export_pdf(paths: Sequence[Path], opts: ExportOptions, target: Path, progres
     lowres_count = 0
     try:
         groups = page_groups(paths, opts.photos_per_page, opts.special_pages)
+        numbers = numbers_for_groups(groups, opts.special_pages,
+                                     enabled=opts.numbering_enabled, start=opts.numbering_start,
+                                     skip_special=opts.numbering_skip_special)
         for i, group in enumerate(groups, 1):
-            rendered, (w_mm, h_mm), lowres = render_layout_page(group, opts, page_index=i - 1)
+            rendered, (w_mm, h_mm), lowres = render_layout_page(group, opts, page_index=i - 1,
+                                                                 printed_number=numbers[i-1])
             lowres_count += int(lowres)
             w_pt, h_pt = w_mm * 72 / 25.4, h_mm * 72 / 25.4
             document.setPageSize((w_pt, h_pt))
@@ -762,7 +804,8 @@ def export_pdf(paths: Sequence[Path], opts: ExportOptions, target: Path, progres
         # pueden recuperar cada fotografía, sin confundirla con los fondos borrosos.
         from pdf_sources import attach_sources
         attach_sources(target, list(paths), opts.photos_per_page, opts.pdf_page_paths,
-                       special_pages=opts.special_pages, photo_edits=opts.photo_edits)
+                       special_pages=opts.special_pages, photo_edits=opts.photo_edits,
+                       captions=opts.captions, layout_template=opts.layout_template)
         if progress:
             progress(len(groups), len(groups), "Originales incluidos en el PDF")
     except Exception:
@@ -830,8 +873,12 @@ def export_word(paths: Sequence[Path], opts: ExportOptions, target: Path, progre
     style.paragraph_format.line_spacing = Pt(1)
     lowres_count = 0
     groups = page_groups(paths, opts.photos_per_page, opts.special_pages)
+    numbers = numbers_for_groups(groups, opts.special_pages,
+                                 enabled=opts.numbering_enabled, start=opts.numbering_start,
+                                 skip_special=opts.numbering_skip_special)
     for i, group in enumerate(groups, 1):
-        rendered, (w_mm, h_mm), lowres = render_layout_page(group, opts, page_index=i - 1)
+        rendered, (w_mm, h_mm), lowres = render_layout_page(group, opts, page_index=i - 1,
+                                                             printed_number=numbers[i-1])
         lowres_count += int(lowres)
         if i == 1:
             section = document.sections[0]

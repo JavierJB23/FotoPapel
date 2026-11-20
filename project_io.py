@@ -43,6 +43,7 @@ def save_project(
     settings: dict, progress: Progress | None = None,
     *, special_pages: dict[Path, dict] | None = None,
     photo_edits: dict[Path, dict] | None = None,
+    captions: dict[Path, dict] | None = None,
 ) -> Path:
     """Guarda todo dentro de UN archivo; no depende de rutas originales."""
     paths = list(paths)
@@ -56,6 +57,8 @@ def save_project(
     from special_pages import validate_special_spec
     special_pages = special_pages or {}
     photo_edits = photo_edits or {}
+    captions = captions or {}
+    from advanced_layout import validate_caption, has_caption
     from photo_edits import validate_edits, has_edits
     records = []
     names = {}
@@ -92,6 +95,7 @@ def save_project(
             "kind": "special_page" if path in special_pages else ("pdf_page" if path in pdf_origins else "image"),
             "special": custom_spec,
             "edits": validate_edits(photo_edits[path]) if path in photo_edits and has_edits(photo_edits[path]) else None,
+            "caption": validate_caption(captions[path]) if path in captions and has_caption(captions[path]) else None,
             "background_asset": background_arc,
             "background_size": background_size,
             "background_sha256": background_sha256,
@@ -160,6 +164,8 @@ def load_project(source: Path, folder: Path, progress: Progress | None = None) -
             pdf_origins = {}
             special_pages = {}
             photo_edits = {}
+            captions = {}
+            from advanced_layout import validate_caption, has_caption
             from photo_edits import validate_edits, has_edits
             from special_pages import validate_special_spec
             for idx, record in enumerate(records, 1):
@@ -208,6 +214,14 @@ def load_project(source: Path, folder: Path, progress: Progress | None = None) -
                             photo_edits[path] = edits
                 except (ValueError, TypeError) as exc:
                     raise ProjectError('La edición de una fotografía no es válida') from exc
+                cap = record.get('caption')
+                if cap is not None:
+                    try:
+                        checked = validate_caption(cap)
+                    except (TypeError, ValueError) as exc:
+                        raise ProjectError('Pie de foto incorrecto') from exc
+                    if has_caption(checked):
+                        captions[path] = checked
                 if kind == 'special_page':
                     try:
                         spec = dict(record.get('special'))
@@ -259,6 +273,11 @@ def load_project(source: Path, folder: Path, progress: Progress | None = None) -
                     fit=settings['fit'], dpi=int(settings['dpi']),
                     fmt=settings['fmt'], binding=settings['binding'],
                     photos_per_page=int(settings['photos_per_page']),
+                    layout_template=settings.get('layout_template', 'Cuadrícula'),
+                    numbering_enabled=settings.get('numbering_enabled', False),
+                    numbering_position=settings.get('numbering_position', 'Exterior'),
+                    numbering_skip_special=settings.get('numbering_skip_special', True),
+                    numbering_start=int(settings.get('numbering_start', 1)),
                 ).validate()
             except (KeyError, TypeError, ValueError) as exc:
                 raise ProjectError("Los ajustes guardados no son compatibles") from exc
@@ -269,6 +288,7 @@ def load_project(source: Path, folder: Path, progress: Progress | None = None) -
                 "pdf_origins": pdf_origins,
                 "special_pages": special_pages,
                 "photo_edits": photo_edits,
+                "captions": captions,
                 "settings": settings,
             }
     except (BadZipFile, OSError, json.JSONDecodeError, KeyError) as exc:

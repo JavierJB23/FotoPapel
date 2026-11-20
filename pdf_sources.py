@@ -30,13 +30,19 @@ MAX_MANIFEST_BYTES = 4 * 1024 * 1024
 def _make_bundle(paths: list[Path], photos_per_page: int,
                  pdf_page_paths: Collection[Path] = (), *,
                  special_pages: dict[Path, dict] | None = None,
-                 photo_edits: dict[Path, dict] | None = None) -> bytes:
+                 photo_edits: dict[Path, dict] | None = None,
+                 captions: dict[Path, dict] | None = None,
+                 layout_template: str = "Cuadrícula") -> bytes:
     if not paths or len(paths) > MAX_IMAGES:
         raise ValueError("Demasiadas imágenes para guardar sus originales en el PDF")
     from processor import page_groups
     from special_pages import validate_special_spec
     special_pages = special_pages or {}
     photo_edits = photo_edits or {}
+    captions = captions or {}
+    from advanced_layout import TEMPLATES, validate_caption, has_caption
+    if layout_template not in TEMPLATES:
+        raise ValueError("Plantilla de PDF no válida")
     from photo_edits import validate_edits, has_edits
     page_number = {path: n for n, group in enumerate(page_groups(paths, photos_per_page, special_pages))
                    for path in group}
@@ -113,11 +119,12 @@ def _make_bundle(paths: list[Path], photos_per_page: int,
                           "page": page_number[path],
                           "special": special_spec,
                           "edits": validate_edits(photo_edits[path]) if path in photo_edits and has_edits(photo_edits[path]) else None,
+                          "caption": validate_caption(captions[path]) if path in captions and has_caption(captions[path]) else None,
                           "sha256": checksum.hexdigest(), "size": size,
                           "recovered_from_flat_pdf": path in pdf_page_paths,
                           **bg_meta})
         manifest = {"format": FORMAT_NAME, "version": FORMAT_VERSION,
-                    "photos_per_page": photos_per_page, "items": items}
+                    "photos_per_page": photos_per_page, "layout_template": layout_template, "items": items}
         z.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False))
     return buffer.getvalue()
 
@@ -125,7 +132,9 @@ def _make_bundle(paths: list[Path], photos_per_page: int,
 def attach_sources(pdf_path: Path, paths: list[Path], photos_per_page: int,
                    pdf_page_paths: Collection[Path] = (), *,
                    special_pages: dict[Path, dict] | None = None,
-                   photo_edits: dict[Path, dict] | None = None) -> None:
+                   photo_edits: dict[Path, dict] | None = None,
+                   captions: dict[Path, dict] | None = None,
+                   layout_template: str = "Cuadrícula") -> None:
     """Inserta fuentes originales en un PDF sin modificar sus páginas visibles.
 
     Operación segura: el PDF existente solo se sustituye si la copia revisada
@@ -135,7 +144,8 @@ def attach_sources(pdf_path: Path, paths: list[Path], photos_per_page: int,
 
     pdf_path = Path(pdf_path)
     content = _make_bundle(paths, photos_per_page, pdf_page_paths, special_pages=special_pages,
-                           photo_edits=photo_edits)
+                           photo_edits=photo_edits, captions=captions,
+                           layout_template=layout_template)
     writer = PdfWriter()
     reader = PdfReader(str(pdf_path), strict=False)
     writer.append(reader)
@@ -160,7 +170,7 @@ def attach_sources(pdf_path: Path, paths: list[Path], photos_per_page: int,
 
 
 def recover_sources(pdf_path: Path, folder: Path, progress=None, *, include_specials: bool = False,
-                    include_edits: bool = False):
+                    include_edits: bool = False, include_captions: bool = False):
     """Devuelve (paths, pages, per_sheet); opcionalmente también portadas.
 
     Si no hay adjunto devuelve None, para permitir importación clásica. Los
@@ -195,12 +205,14 @@ def recover_sources(pdf_path: Path, folder: Path, progress=None, *, include_spec
             items = manifest.get("items")
             photos_per_page = manifest.get("photos_per_page")
             if (not isinstance(items, list) or not 0 < len(items) <= MAX_IMAGES
-                    or photos_per_page not in (1, 2, 4, 6, 9)
+                    or photos_per_page not in (1, 2, 3, 4, 6, 9)
                     or len(info) != len(items) + 1 + sum(bool(i.get('background_asset')) for i in items if isinstance(i, dict))):
                 raise ValueError("El índice de originales del PDF no es válido")
             from special_pages import validate_special_spec
             special_specs = []
             recovered_edits = []
+            recovered_captions = []
+            from advanced_layout import validate_caption, has_caption
             from photo_edits import validate_edits, has_edits
             for idx, item in enumerate(items, 1):
                 if not isinstance(item, dict):
@@ -258,6 +270,9 @@ def recover_sources(pdf_path: Path, folder: Path, progress=None, *, include_spec
                 edits = item.get('edits')
                 edits = validate_edits(edits) if edits is not None else None
                 recovered_edits.append(edits if has_edits(edits) else None)
+                raw_cap = item.get('caption')
+                cap = validate_caption(raw_cap) if raw_cap is not None else None
+                recovered_captions.append(cap if has_caption(cap) else None)
                 if (not isinstance(size, int) or size != entry.file_size
                         or size > MAX_SOURCE_BYTES or size < 1
                         or not isinstance(checksum, str) or len(checksum) != 64
@@ -298,6 +313,9 @@ def recover_sources(pdf_path: Path, folder: Path, progress=None, *, include_spec
             sizes.append((float(page.mediabox.width) * 25.4 / 72,
                           float(page.mediabox.height) * 25.4 / 72))
         edit_specs = {path: edits for path, edits in zip(items_out, recovered_edits) if edits is not None}
+        cap_specs = {path: cap for path, cap in zip(items_out, recovered_captions) if cap is not None}
+        if include_specials and include_edits and include_captions:
+            return items_out, sizes, photos_per_page, specs, edit_specs, cap_specs
         if include_specials and include_edits:
             return items_out, sizes, photos_per_page, specs, edit_specs
         if include_specials:

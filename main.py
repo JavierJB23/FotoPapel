@@ -32,6 +32,13 @@ from photo_editor_ui import edit_photo
 from thumbnail_preview import render_photo_thumbnail
 from photo_edits import validate_edits, has_edits, apply_edits
 import qrcode
+from advanced_layout import (TEMPLATES, NUMBER_POSITIONS, CAPTION_PLACEMENTS,
+                             validate_caption, has_caption, numbers_for_groups, book_spreads)
+try:
+    from tkinterdnd2 import DND_FILES, TkinterDnD
+except ImportError:  # El código también puede probarse sin TkDND.
+    DND_FILES = None
+    TkinterDnD = None
 
 APP_NAME = "Revelo"
 BG = "#0B1422"
@@ -97,6 +104,8 @@ class ReveloApp:
         self.special_temp = tempfile.TemporaryDirectory(prefix="Revelo_Paginas_")
         self.special_pages: dict[Path, dict] = {}
         self.photo_edits: dict[Path, dict] = {}  # instrucciones no destructivas
+        self.captions: dict[Path, dict] = {}
+        self.preview_book = False
         self.photo_editor_window = None
         self.mobile_temp = tempfile.TemporaryDirectory(prefix="Revelo_Movil_")
         self.project_temp = tempfile.TemporaryDirectory(prefix="Revelo_Proyecto_")
@@ -137,6 +146,11 @@ class ReveloApp:
         self.output_format = tk.StringVar(value="PDF")
         self.binding = tk.StringVar(value="No")
         self.per_sheet = tk.StringVar(value="1")
+        self.layout_template = tk.StringVar(value="Cuadrícula")
+        self.numbering_enabled = tk.BooleanVar(value=False)
+        self.numbering_position = tk.StringVar(value="Exterior")
+        self.numbering_skip_special = tk.BooleanVar(value=True)
+        self.numbering_start = tk.IntVar(value=1)
         self.layout_info = tk.StringVar(value="Una fotografía por hoja en Word y PDF")
         self.overview = tk.StringVar(value="A4 · 210 × 297 mm · 2480 × 3508 px a 300 PPP")
         self.feedback = tk.StringVar(value="Listo para cargar fotos y PDF.")
@@ -148,8 +162,10 @@ class ReveloApp:
 
         self._style()
         self._layout()
+        self._configure_file_drop()
         self._update_overview()
         self.per_sheet.trace_add("write", self._on_per_sheet_changed)
+        self.layout_template.trace_add("write", self._on_template_changed)
         # Las tarjetas muestran siempre el papel y la orientación actuales.
         for var in (self.paper, self.orientation, self.fit, self.binding):
             var.trace_add("write", self._on_thumbnail_settings_changed)
@@ -309,6 +325,7 @@ class ReveloApp:
             color=MUTED, size=12, justify="center",
         )
         self.library_placeholder.pack(pady=115)
+        self._register_drop(self.library_placeholder)
 
         ordering_top = tk.Frame(right_panel, bg=SURFACE, padx=16, pady=14)
         ordering_top.pack(fill="x")
@@ -319,17 +336,23 @@ class ReveloApp:
                     size=10, color=MUTED).pack(anchor="w", pady=(3, 0))
         self.reset_btn = self._button(ordering_top, "Orden inicial", self.reset_order, small=True)
         self.reset_btn.pack(side="right")
+        self.numbers_btn = self._button(ordering_top, "Numeración…", self.numbering_dialog, small=True)
+        self.numbers_btn.pack(side="right", padx=(0, 8))
         tk.Frame(right_panel, height=1, bg=BORDER).pack(fill="x")
         hint = tk.Frame(right_panel, bg=ACCENT_DARK, padx=12, pady=8)
         hint.pack(fill="x", padx=12, pady=(10, 2))
         self._label(hint, "FOTOS POR HOJA", size=9, weight="bold",
                     color="#C1F3E5").pack(side="left", padx=(0, 8))
-        self.per_sheet_combo = ttk.Combobox(hint, values=["1", "2", "4", "6", "9"],
+        self.per_sheet_combo = ttk.Combobox(hint, values=["1", "2", "3", "4", "6", "9"],
                                            textvariable=self.per_sheet, width=3,
                                            state="readonly", style="Custom.TCombobox")
         self.per_sheet_combo.pack(side="left")
-        self._label(hint, "Dos clics: origen → destino · ↑ ↓ para ajustar",
-                    size=9, color="#C1F3E5").pack(side="left", padx=(12, 0))
+        self._label(hint, "DISEÑO", size=9, weight="bold",
+                    color="#C1F3E5").pack(side="left", padx=(12, 6))
+        self.layout_combo = ttk.Combobox(hint, values=list(TEMPLATES),
+                                          textvariable=self.layout_template, width=29,
+                                          state="readonly", style="Custom.TCombobox")
+        self.layout_combo.pack(side="left", fill="x", expand=True)
         self.order_area = ScrollingArea(right_panel)
         self.order_area.pack(fill="both", expand=True, padx=9, pady=9)
         self._show_empty_order()
@@ -392,6 +415,13 @@ class ReveloApp:
         self.render_order()
 
     def _on_per_sheet_changed(self, *_):
+        if self.per_sheet.get() != "3" and self.layout_template.get() != "Cuadrícula":
+            self.layout_template.set("Cuadrícula")
+        self.render_order()
+
+    def _on_template_changed(self, *_):
+        if self.layout_template.get() != "Cuadrícula" and self.per_sheet.get() != "3":
+            self.per_sheet.set("3")
         self.render_order()
 
     def _groups(self) -> list[tuple[Path, ...]]:
@@ -555,6 +585,12 @@ class ReveloApp:
                     picture, _, _ = render_layout_page((path,), opts,
                                        preview_max_size=(360,255), page_index=index)
                     picture.thumbnail((150,108),Image.Resampling.LANCZOS)
+                elif has_caption(self.captions.get(path)):
+                    from dataclasses import replace
+                    preview_opts = replace(opts, photos_per_page=1, layout_template="Cuadrícula")
+                    picture, _, _ = render_layout_page((path,), preview_opts,
+                                       preview_max_size=(420, 310), page_index=index)
+                    picture.thumbnail((150,108),Image.Resampling.LANCZOS)
                 else:
                     picture = render_photo_thumbnail(path, opts, page_index=index)
             except (OSError, ValueError, RuntimeError):
@@ -610,6 +646,161 @@ class ReveloApp:
         )
         if names:
             self.import_paths([Path(f) for f in names])
+
+    def caption_dialog(self, path: Path):
+        """Pie de foto de dos líneas: siempre editable, sin tocar el archivo origen."""
+        if self.is_busy or path not in self.paths or path in self.special_pages:
+            return
+        spec = validate_caption(self.captions.get(path))
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Revelo · Texto y pie de foto")
+        dialog.configure(bg=BG)
+        dialog.geometry("580x420")
+        dialog.minsize(480, 365)
+        box = tk.Frame(dialog, bg=BG, padx=23, pady=20)
+        box.pack(fill="both", expand=True)
+        self._label(box, "TEXTO Y PIE DE FOTO", size=16, weight="bold").pack(anchor="w")
+        self._label(box, "Añade un título y una descripción, fecha o lugar. Son opcionales.",
+                    color=MUTED, size=9).pack(anchor="w", pady=(7, 14))
+        title = tk.StringVar(value=spec["title"])
+        detail = tk.StringVar(value=spec["detail"])
+        placement = tk.StringVar(value=spec["placement"])
+        for label, var in (("TÍTULO", title), ("DESCRIPCIÓN / LUGAR / FECHA", detail)):
+            self._label(box, label, color=MUTED, weight="bold", size=9).pack(anchor="w", pady=(10, 4))
+            entry = tk.Entry(box, textvariable=var, bg=SURFACE_2, fg=TEXT,
+                             font=("Segoe UI", 11), insertbackground=ACCENT,
+                             relief="flat")
+            entry.pack(fill="x", ipady=7)
+        self._label(box, "UBICACIÓN", color=MUTED, weight="bold", size=9).pack(anchor="w", pady=(12, 5))
+        ttk.Combobox(box, textvariable=placement, values=list(CAPTION_PLACEMENTS),
+                     state="readonly", style="Custom.TCombobox").pack(fill="x")
+        controls = tk.Frame(box, bg=BG)
+        controls.pack(side="bottom", fill="x", pady=(14, 0))
+        self._button(controls, "Cancelar", dialog.destroy, small=True).pack(side="right")
+        def save():
+            try:
+                clean = validate_caption({"title": title.get(), "detail": detail.get(),
+                                          "placement": placement.get()})
+            except ValueError as exc:
+                messagebox.showwarning("Pie de foto", str(exc))
+                return
+            if has_caption(clean):
+                self.captions[path] = clean
+            else:
+                self.captions.pop(path, None)
+            dialog.destroy()
+            self.thumbnails.clear()
+            self.thumbnails_small.clear()
+            self.render_library()
+            self.render_order()
+            self.feedback.set("Pie de foto actualizado. La imagen original no se modifica.")
+        self._button(controls, "Guardar texto", save, accent=True, small=True).pack(side="right", padx=(0, 8))
+        dialog.bind("<Escape>", lambda event: dialog.destroy())
+
+    def numbering_dialog(self):
+        """Numeración opcional, independiente del orden físico de encuadernación."""
+        window = tk.Toplevel(self.root)
+        window.title("Revelo · Numeración de páginas")
+        window.configure(bg=BG)
+        window.geometry("530x390")
+        window.minsize(450, 340)
+        panel = tk.Frame(window, bg=BG, padx=24, pady=19)
+        panel.pack(fill="both", expand=True)
+        self._label(panel, "NUMERACIÓN DE PÁGINAS", size=16, weight="bold").pack(anchor="w")
+        self._label(panel, "Se aplicará a previsualización, PDF, Word e imágenes.", color=MUTED,
+                    size=9).pack(anchor="w", pady=(7, 15))
+        enabled = tk.BooleanVar(value=self.numbering_enabled.get())
+        skip = tk.BooleanVar(value=self.numbering_skip_special.get())
+        where = tk.StringVar(value=self.numbering_position.get())
+        start = tk.StringVar(value=str(self.numbering_start.get()))
+        for caption, variable in (("Numerar páginas", enabled),
+                                  ("Omitir portada y separadores", skip)):
+            tk.Checkbutton(panel, text=caption, variable=variable, bg=BG, fg=TEXT,
+                           selectcolor=SURFACE_2, activebackground=BG,
+                           activeforeground=TEXT).pack(anchor="w", pady=(4, 6))
+        self._label(panel, "POSICIÓN DEL NÚMERO", color=MUTED, weight="bold",
+                    size=9).pack(anchor="w", pady=(10, 5))
+        ttk.Combobox(panel, textvariable=where, values=list(NUMBER_POSITIONS),
+                     state="readonly", style="Custom.TCombobox").pack(fill="x")
+        self._label(panel, "EMPEZAR EN", color=MUTED, size=9,
+                    weight="bold").pack(anchor="w", pady=(10, 5))
+        tk.Entry(panel, textvariable=start, bg=SURFACE_2, fg=TEXT,
+                 insertbackground=ACCENT, relief="flat", width=12).pack(anchor="w", ipady=6)
+        buttons = tk.Frame(panel, bg=BG)
+        buttons.pack(side="bottom", fill="x", pady=(12,0))
+        self._button(buttons, "Cancelar", window.destroy, small=True).pack(side="right")
+        def save():
+            try:
+                value = int(start.get())
+                if not 1 <= value <= 999999:
+                    raise ValueError
+            except (ValueError, TypeError):
+                messagebox.showwarning("Numeración", "Introduce un número de inicio entre 1 y 999999.")
+                return
+            self.numbering_enabled.set(enabled.get())
+            self.numbering_position.set(where.get())
+            self.numbering_skip_special.set(skip.get())
+            self.numbering_start.set(value)
+            window.destroy()
+            self.thumbnails.clear()
+            self.thumbnails_small.clear()
+            self.render_library()
+            self.render_order()
+            self.feedback.set("Numeración actualizada para todas las hojas.")
+        self._button(buttons, "Aplicar", save, accent=True, small=True).pack(side="right", padx=(0, 8))
+        window.bind("<Escape>",lambda event: window.destroy())
+
+    def _register_drop(self, widget):
+        """Permite soltar imágenes/PDF del Explorador usando el TkDND empaquetado."""
+        if DND_FILES is None:
+            return
+        try:
+            if hasattr(widget, "drop_target_register"):
+                widget.drop_target_register(DND_FILES)
+                widget.dnd_bind("<<Drop>>", self._on_file_drop)
+            else:
+                # TkinterDnD permite registrar también widgets Tk normales.
+                self.root.tk.call("tkdnd::drop_target", "register", widget._w, DND_FILES)
+                # El bind nativo de Tk no construye el campo event.data.
+                # Utilizamos el sustituidor de eventos de TkinterDnD2 también
+                # cuando el widget destino es un Frame/Label de Tk estándar.
+                if hasattr(self.root, "_substitute_dnd"):
+                    self.root._bind(("bind", widget._w), "<<Drop>>",
+                                    self._on_file_drop, "+", self.root._substitute_dnd)
+        except (tk.TclError, RuntimeError):
+            pass
+
+    def _configure_file_drop(self):
+        for target in (self.root, self.library_area, self.library_area.canvas,
+                       self.library_area.inner, self.order_area, self.order_area.canvas):
+            self._register_drop(target)
+
+    def _on_file_drop(self, event):
+        if self.is_busy:
+            return "break"
+        try:
+            candidates = [Path(s).expanduser() for s in self.root.tk.splitlist(event.data)]
+            selected = []
+            for path in candidates:
+                if path.is_dir():
+                    selected.extend(sorted((p for p in path.iterdir()
+                                            if p.is_file() and (p.suffix.lower() in SUPPORTED_EXTENSIONS
+                                                                or p.suffix.lower() == '.pdf')),
+                                           key=lambda p: p.name.casefold()))
+                elif path.is_file() and (path.suffix.lower() in SUPPORTED_EXTENSIONS
+                                         or path.suffix.lower() == '.pdf'):
+                    selected.append(path)
+            if len(selected) > 250:
+                if not messagebox.askyesno("Importar fotografías",
+                                           f"Has arrastrado {len(selected)} archivos. ¿Quieres importarlos todos?"):
+                    return "break"
+            if selected:
+                self.import_paths(selected)
+            else:
+                messagebox.showwarning("Arrastrar archivos", "Arrastra fotografías o documentos PDF compatibles.")
+        except OSError as exc:
+            messagebox.showerror("Importación por arrastre", str(exc))
+        return "break"
 
     def open_mobile_import(self):
         """Muestra el QR para seleccionar y enviar fotos desde un móvil en la LAN."""
@@ -724,6 +915,7 @@ class ReveloApp:
             mixed_pdf = False
             recovered_specials = {}
             recovered_edits = {}
+            recovered_captions = {}
             seen = set()
             for source in selected:
                 if source in seen:
@@ -737,16 +929,18 @@ class ReveloApp:
                         progress = lambda i, n, name: self.updates.put(("import_progress", i, n, name))
                         try:
                             originals = recover_sources(source, temp_dir, progress=progress,
-                                                        include_specials=True, include_edits=True)
+                                                        include_specials=True, include_edits=True,
+                                                        include_captions=True)
                         except Exception:
                             # Si un lector elimina o altera el adjunto interno,
                             # el PDF debe seguir pudiendo abrirse como páginas.
                             originals = None
                             errors.append(f"{source.name}: no se recuperaron originales adjuntos; se leerán sus páginas como imágenes")
                         if originals is not None:
-                            images, sizes, per_sheet, recovered_specs, source_edits = originals
+                            images, sizes, per_sheet, recovered_specs, source_edits, source_captions = originals
                             recovered_specials.update(recovered_specs)
                             recovered_edits.update(source_edits)
+                            recovered_captions.update(source_captions)
                             # Las fotos recuperadas son originales: NO se deben
                             # marcar como página PDF ni intentar quitarles un fondo.
                             paper, has_mixed = matched_paper(sizes)
@@ -781,11 +975,11 @@ class ReveloApp:
                 else:
                     errors.append(f"{source.name}: formato no admitido")
             self.updates.put(("import_done", items, detected_paper, mixed_pdf, errors,
-                              recovered_specials, recovered_edits))
+                              recovered_specials, recovered_edits, recovered_captions))
 
         threading.Thread(target=do_import, daemon=True).start()
 
-    def _finish_import(self, items, detected_paper, mixed_pdf, errors, specials=None, edits=None):
+    def _finish_import(self, items, detected_paper, mixed_pdf, errors, specials=None, edits=None, captions=None):
         was_empty = not self.paths
         count = 0
         for path, dims, label, origin in items:
@@ -798,6 +992,8 @@ class ReveloApp:
                 self.special_pages[path] = specials[path]
             if path in (edits or {}):
                 self.photo_edits[path] = edits[path]
+            if path in (captions or {}):
+                self.captions[path] = captions[path]
             if origin is not None:
                 self.pdf_origins[path] = origin
             self.paths.append(path)
@@ -812,6 +1008,7 @@ class ReveloApp:
                 self.pdf_origins.pop(path, None)
                 self.special_pages.pop(path, None)
                 self.photo_edits.pop(path, None)
+                self.captions.pop(path, None)
                 self.thumbnails.pop(path, None)
                 self.thumbnails_small.pop(path, None)
                 errors.append(f"{label}: no se pudo mostrar ({error})")
@@ -865,6 +1062,7 @@ class ReveloApp:
             self.pdf_origins.clear()
             self.special_pages.clear()
             self.photo_edits.clear()
+            self.captions.clear()
             self.selected = None
             self.order_selected = None
             self.render_library()
@@ -894,9 +1092,11 @@ class ReveloApp:
         self._clear_children(self.library_area.inner)
         self.count_var.set(f"{len(self.paths)} elemento{'s' if len(self.paths) != 1 else ''}")
         if not self.paths:
-            self._label(self.library_area.inner,
-                        "Tus fotos y páginas PDF aparecerán aquí.\n\nAñade fotos, PDF o una portada o separador.",
-                        color=MUTED, size=12, justify="center").pack(pady=115)
+            empty_hint = self._label(self.library_area.inner,
+                        "Tus fotos y páginas PDF aparecerán aquí.\n\nArrastra imágenes o PDF desde Windows, o pulsa «Añadir fotos / PDF».",
+                        color=MUTED, size=12, justify="center")
+            empty_hint.pack(pady=115)
+            self._register_drop(empty_hint)
             return
         for column in range(self.library_cols):
             self.library_area.inner.grid_columnconfigure(column, weight=1)
@@ -932,9 +1132,13 @@ class ReveloApp:
                 button_name = "Editar foto ✎" if path not in self.photo_edits else "Editar foto ✓"
                 self._button(card, button_name, lambda p=path: self.edit_photo_dialog(p),
                              small=True).pack(fill="x", pady=(6,0))
+                self._button(card, "Texto / pie de foto" + (" ✓" if has_caption(self.captions.get(path)) else ""),
+                             lambda p=path: self.caption_dialog(p), small=True).pack(fill="x", pady=(4,0))
             for part in (card, thumb, lbl, meta):
                 self._make_draggable(part, path, 'library')
             self.library_area.bind_wheel_recursive(card)
+            for drop_target in (card, thumb, lbl, meta):
+                self._register_drop(drop_target)
         self.library_area._update_scrollregion()
         self.library_area.canvas.yview_moveto(offset)
 
@@ -998,6 +1202,8 @@ class ReveloApp:
             for part in (slot, number, thumb, text_box, name, sub):
                 part.bind('<ButtonRelease-1>', lambda event, p=path: self._order_click(p))
             self.order_area.bind_wheel_recursive(slot)
+            for drop_target in (slot, number, thumb, text_box, name, sub):
+                self._register_drop(drop_target)
         self.order_area._update_scrollregion()
         self.order_area.canvas.yview_moveto(offset)
         if self.preview_window is not None and self.preview_window.winfo_exists():
@@ -1117,6 +1323,12 @@ class ReveloApp:
             photos_per_page=int(self.per_sheet.get()),
             special_pages=dict(self.special_pages),
             photo_edits={path: dict(spec) for path, spec in self.photo_edits.items()},
+            layout_template=self.layout_template.get(),
+            captions={path: dict(spec) for path, spec in self.captions.items()},
+            numbering_enabled=self.numbering_enabled.get(),
+            numbering_position=self.numbering_position.get(),
+            numbering_skip_special=self.numbering_skip_special.get(),
+            numbering_start=int(self.numbering_start.get()),
         )
 
     def open_preview(self):
@@ -1141,7 +1353,10 @@ class ReveloApp:
         except tk.TclError:
             pass
         self.preview_window = window
-        self.preview_index = self.pages.index(self.selected) // int(self.per_sheet.get()) if self.selected in self.pages else 0
+        self.preview_book = False
+        groups_open = self._groups()
+        self.preview_index = next((i for i, group in enumerate(groups_open)
+                                   if self.selected in group), 0)
         top = tk.Frame(window, bg=BG, padx=22, pady=15)
         top.pack(fill="x")
         self._label(top, "VISTA PREVIA DE IMPRESIÓN", size=15,
@@ -1163,6 +1378,8 @@ class ReveloApp:
         self.preview_prev_btn.pack(side="left")
         self.preview_next_btn = self._button(controls, "Siguiente →", lambda: self._preview_move(1), small=True)
         self.preview_next_btn.pack(side="right")
+        self.preview_book_btn = self._button(controls, "Libro abierto", self._toggle_preview_book, small=True)
+        self.preview_book_btn.pack(side="left", padx=(10,0))
         self._label(controls, "", textvariable=self.preview_page_text, size=11,
                     weight="bold").pack(fill="x", pady=(7, 0))
         self._label(window, "", textvariable=self.preview_detail_text, color=MUTED,
@@ -1184,12 +1401,67 @@ class ReveloApp:
             self.preview_window.destroy()
         self.preview_window = None
         self.preview_canvas = None
+        self.preview_book = False
+
+    def _toggle_preview_book(self):
+        groups = self._groups()
+        spreads = book_spreads(len(groups))
+        if not self.preview_book:
+            page = self.preview_index
+            self.preview_index = next((i for i, pair in enumerate(spreads) if page in pair), 0)
+            self.preview_book = True
+            self.preview_book_btn.configure(text="Página única")
+        else:
+            spread = spreads[min(self.preview_index, len(spreads)-1)]
+            self.preview_index = spread[0] if spread[0] is not None else spread[1]
+            self.preview_book = False
+            self.preview_book_btn.configure(text="Libro abierto")
+        self._show_preview_page()
+
+    def _render_open_book(self, groups, spread):
+        """Dos hojas cara a cara. Primera hoja a la derecha, como un libro."""
+        pages = []
+        numbers = numbers_for_groups(groups, self.special_pages,
+                                     enabled=self.numbering_enabled.get(),
+                                     start=self.numbering_start.get(),
+                                     skip_special=self.numbering_skip_special.get())
+        for index in spread:
+            if index is None:
+                pages.append(None)
+            else:
+                im, _, _ = render_layout_page(groups[index], self._options(),
+                                               preview_max_size=(640, 680), page_index=index,
+                                               printed_number=numbers[index])
+                pages.append(im)
+        try:
+            active = [im for im in pages if im is not None]
+            base_w = max(im.width for im in active)
+            base_h = max(im.height for im in active)
+            gutter = max(8, base_w // 35)
+            result = Image.new("RGB", (base_w*2 + gutter, base_h+16), (17,30,46))
+            draw = ImageDraw.Draw(result)
+            for position, im in enumerate(pages):
+                x = position * (base_w+gutter)
+                if im is None:
+                    draw.rectangle((x, 8, x+base_w-1, base_h+7), fill=(236,231,220))
+                    continue
+                x += (base_w-im.width)//2
+                y = 8+(base_h-im.height)//2
+                draw.rectangle((x+3,y+3,x+im.width+3,y+im.height+3),fill=(9,20,31))
+                result.paste(im,(x,y))
+            seam = base_w + gutter//2
+            draw.line((seam,4,seam,base_h+11),fill=(72,90,104),width=3)
+            return result
+        finally:
+            for im in pages:
+                if im is not None:
+                    im.close()
 
     def _preview_move(self, step: int):
         if not self.pages:
             self._close_preview()
             return
-        total = len(self._groups())
+        total = len(book_spreads(len(self._groups()))) if self.preview_book else len(self._groups())
         new_index = max(0, min(total - 1, self.preview_index + step))
         if new_index != self.preview_index:
             self.preview_index = new_index
@@ -1202,6 +1474,26 @@ class ReveloApp:
             self._close_preview()
             return
         groups = self._groups()
+        if self.preview_book:
+            spreads = book_spreads(len(groups))
+            self.preview_index = min(self.preview_index, len(spreads)-1)
+            spread = spreads[self.preview_index]
+            label = ("Portada · página derecha" if spread[0] is None else
+                     "Páginas " + " y ".join(str(j+1) for j in spread if j is not None))
+            self.preview_page_text.set(f"Vista de libro · {label} · {self.preview_index+1}/{len(spreads)}")
+            self.preview_prev_btn.configure(state="normal" if self.preview_index > 0 else "disabled")
+            self.preview_next_btn.configure(state="normal" if self.preview_index < len(spreads)-1 else "disabled")
+            try:
+                rendered = self._render_open_book(groups, spread)
+                old = self.preview_image
+                self.preview_image = rendered
+                if old is not None:
+                    old.close()
+                self.preview_detail_text.set("Vista de lectura simulada · El documento exportado conserva sus hojas individuales.")
+                self._paint_preview()
+            except Exception as exc:
+                self.preview_detail_text.set(f"Error en la vista de libro: {exc}")
+            return
         self.preview_index = min(self.preview_index, len(groups) - 1)
         group = groups[self.preview_index]
         path = group[0]
@@ -1213,9 +1505,13 @@ class ReveloApp:
         self.preview_prev_btn.configure(state="normal" if self.preview_index > 0 else "disabled")
         self.preview_next_btn.configure(state="normal" if self.preview_index < len(groups) - 1 else "disabled")
         try:
+            nums = numbers_for_groups(groups, self.special_pages,
+                                      enabled=self.numbering_enabled.get(),
+                                      start=self.numbering_start.get(),
+                                      skip_special=self.numbering_skip_special.get())
             rendered, (w_mm, h_mm), lowres = render_layout_page(
                 group, self._options(), preview_max_size=(1100, 850),
-                page_index=self.preview_index,
+                page_index=self.preview_index, printed_number=nums[self.preview_index],
             )
             old = self.preview_image
             self.preview_image = rendered
@@ -1320,6 +1616,11 @@ class ReveloApp:
             "fit": self.fit.get(), "dpi": int(self.dpi.get()),
             "fmt": self._options().fmt, "binding": self.binding.get() == "Sí",
             "photos_per_page": int(self.per_sheet.get()),
+            "layout_template": self.layout_template.get(),
+            "numbering_enabled": self.numbering_enabled.get(),
+            "numbering_position": self.numbering_position.get(),
+            "numbering_skip_special": self.numbering_skip_special.get(),
+            "numbering_start": int(self.numbering_start.get()),
         }
 
     def save_project_dialog(self):
@@ -1348,12 +1649,14 @@ class ReveloApp:
         labels, origins, settings = dict(self.path_labels), dict(self.pdf_origins), self._project_settings()
         special = dict(self.special_pages)
         photos_changed = dict(self.photo_edits)
+        captions_changed = dict(self.captions)
 
         def worker():
             try:
                 save_project(target, paths, pages, labels, origins, settings,
                              progress=lambda n, total: self.updates.put(("project_progress", n, total, "Guardando")),
-                             special_pages=special, photo_edits=photos_changed)
+                             special_pages=special, photo_edits=photos_changed,
+                             captions=captions_changed)
                 self.updates.put(("project_saved", target))
             except Exception as exc:
                 self.updates.put(("project_error", str(exc)))
@@ -1397,6 +1700,7 @@ class ReveloApp:
         self.pdf_origins = loaded["pdf_origins"]
         self.special_pages = loaded.get("special_pages", {})
         self.photo_edits = loaded.get("photo_edits", {})
+        self.captions = loaded.get("captions", {})
         self.recovered_pdf_sources.clear()
         self.thumbnails.clear()
         self.thumbnails_small.clear()
@@ -1416,6 +1720,11 @@ class ReveloApp:
         self.output_format.set("Imágenes (mismo formato)" if settings["fmt"] == "Imagenes" else settings["fmt"])
         self.binding.set("Sí" if settings["binding"] else "No")
         self.per_sheet.set(str(settings["photos_per_page"]))
+        self.layout_template.set(settings.get("layout_template", "Cuadrícula"))
+        self.numbering_enabled.set(settings.get("numbering_enabled", False))
+        self.numbering_position.set(settings.get("numbering_position", "Exterior"))
+        self.numbering_skip_special.set(settings.get("numbering_skip_special", True))
+        self.numbering_start.set(settings.get("numbering_start", 1))
         self.project_path = source
         self.render_library()
         self.render_order()
@@ -1508,8 +1817,8 @@ class ReveloApp:
                     self.recovered_pdf_sources.add(source.resolve())
                     self.feedback.set(f"PDF reversible: recuperadas {count} fotografías originales de {source.name}")
                 elif event[0] == "import_done":
-                    _, items, detected_paper, mixed_pdf, errors, special, edits = event
-                    self._finish_import(items, detected_paper, mixed_pdf, errors, special, edits)
+                    _, items, detected_paper, mixed_pdf, errors, special, edits, captions = event
+                    self._finish_import(items, detected_paper, mixed_pdf, errors, special, edits, captions)
                     self.progress["value"] = 0
                     self.percent_text.set("(0 %)")
                 elif event[0] == "project_progress":
@@ -1599,7 +1908,10 @@ class ReveloApp:
 
 
 def main():
-    root = tk.Tk()
+    try:
+        root = TkinterDnD.Tk() if TkinterDnD is not None else tk.Tk()
+    except (tk.TclError, RuntimeError):
+        root = tk.Tk()
     try:
         ico = app_asset("icono.ico")
         if ico.exists() and sys.platform == "win32":
