@@ -437,6 +437,7 @@ class ReveloApp:
                          paper_dimensions_mm=(paper_w_mm, paper_h_mm),
                          page_settings=current_page_settings,
                          settings_vars=(self.paper, self.orientation, self.binding),
+                         orientation_var=self.orientation,
                          on_save=commit)
 
     def special_page_dialog(self, path: Path | None = None):

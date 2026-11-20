@@ -85,6 +85,8 @@ def validate_special_spec(spec: dict) -> dict:
     bgtype = spec.get("background_type", "color")
     if bgtype not in ("color", "imagen"):
         raise ValueError("Tipo de fondo personalizado desconocido")
+    from photo_edits import validate_edits
+    background_edits = validate_edits(spec.get('background_edits'))
     bg_image = spec.get("background_image", "")
     if not isinstance(bg_image, str) or len(bg_image) > 2048:
         raise ValueError("Ruta de imagen de fondo inválida")
@@ -96,6 +98,7 @@ def validate_special_spec(spec: dict) -> dict:
         raise ValueError('El tipo de relleno del fondo no es válido')
     out = {"kind": kind, "theme": theme, "title": title, "subtitle": subtitle,
            "background_type": bgtype, "background_image": bg_image,
+           "background_edits": background_edits,
            "background_fill": fill_mode,
            "background_color": _hex(spec.get("background_color", "#F6EBDC"), "fondo"),
            "text_color": _hex(spec.get("text_color", "#1B2D43"), "título"),
@@ -248,7 +251,12 @@ def render_custom_background(spec: dict, size: tuple[int, int], *,
             image = opened
         else:
             image = source_image
+        applied = None
         try:
+            from photo_edits import apply_edits, has_edits
+            if source_image is None and has_edits(spec.get('background_edits')):
+                applied = apply_edits(image, spec['background_edits'])
+                image = applied
             if spec.get('background_fill', 'color') == 'blurred':
                 base = (blurred_base.copy() if blurred_base is not None
                         and blurred_base.size == (w, h) else _blurred_page_base(image, (w, h)))
@@ -256,6 +264,8 @@ def render_custom_background(spec: dict, size: tuple[int, int], *,
                 canvas = base
             _draw_custom_background(canvas, image, spec)
         finally:
+            if applied is not None:
+                applied.close()
             if opened is not None:
                 opened.close()
     return canvas

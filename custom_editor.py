@@ -15,6 +15,8 @@ from PIL import Image, ImageOps, ImageTk
 from special_pages import (CUSTOM_THEME, validate_special_spec, render_special_page,
                            render_custom_background, draw_custom_text, KINDS, THEMES, FONT_CHOICES)
 from processor import printable_box
+from photo_edits import validate_edits, apply_edits, has_edits
+from photo_editor_ui import edit_photo
 
 BG = '#0B1422'
 SURFACE = '#142236'
@@ -82,7 +84,8 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
                      landscape: bool, binding: bool, on_save,
                      paper_dimensions_mm: tuple[float, float] | None = None,
                      page_settings: Callable[[], tuple[tuple[float, float], bool]] | None = None,
-                     settings_vars: Sequence[tk.Variable] = ()):
+                     settings_vars: Sequence[tk.Variable] = (),
+                     orientation_var: tk.StringVar | None = None):
     """Abre un editor NO modal y guarda el diseño sólo con «Guardar».
 
     Cuando se proporciona page_settings, la orientación, el papel y los
@@ -119,6 +122,9 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
     initial.setdefault('image_x', .5)
     initial.setdefault('image_y', .5)
 
+    # El selector dentro del editor comparte el estado con Revelo principal.
+    if orientation_var is None:
+        orientation_var = tk.StringVar(master=root, value='Horizontal' if landscape else 'Vertical')
     window = tk.Toplevel(root)
     window.title('Revelo · Personalizar portada o separador')
     # La geometría usa el área de trabajo real (sin barra de tareas).
@@ -207,6 +213,7 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
         'image_x': tk.DoubleVar(value=initial['image_x']),
         'image_y': tk.DoubleVar(value=initial['image_y']),
     }
+    background_edits = [validate_edits(initial.get('background_edits'))]
     positions = {key: float(initial[key]) for key in ('title_x', 'title_y', 'subtitle_x', 'subtitle_y')}
     focused = tk.StringVar(value='title')
     linked_scale = tk.BooleanVar(value=True)
@@ -241,6 +248,7 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
         return combo
 
     select('TIPO DE PÁGINA', fields['kind'], list(KINDS))
+    select('ORIENTACIÓN', orientation_var, ['Automática', 'Vertical', 'Horizontal'])
     label('FONDO')
     row_bg = tk.Frame(left, bg=SURFACE)
     row_bg.pack(fill='x')
@@ -249,6 +257,77 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
                        bg=SURFACE, fg=TEXT, activebackground=SURFACE,
                        activeforeground=ACCENT, selectcolor=PANEL,
                        font=('Segoe UI', 9)).pack(side='left', padx=(0,8))
+
+    image_info = tk.StringVar(value=Path(fields['background_image'].get()).name or 'Sin fotografía')
+
+    def load_background_photo(filename: str | Path) -> bool:
+        """Copia segura de una foto al proyecto temporal, sin tocar el original."""
+        try:
+            src = Path(filename).expanduser().resolve()
+            if src.suffix.lower() not in {'.jpg', '.jpeg', '.png', '.webp', '.bmp', '.tif', '.tiff', '.heic', '.heif'}:
+                raise ValueError('Solo se admiten fotografías JPG, PNG, WEBP, TIFF, BMP o HEIC.')
+            if not src.is_file() or src.stat().st_size > 150 * 1024 * 1024:
+                raise ValueError('Archivo no válido o demasiado grande (máximo 150 MB).')
+            with Image.open(src) as image:
+                image.verify()
+            dest = image_dir / f'fondo_{uuid.uuid4().hex}{src.suffix.lower()}'
+            shutil.copyfile(src, dest)
+            fields['background_image'].set(str(dest))
+            fields['background_type'].set('imagen')
+            background_edits[0] = validate_edits(None)
+            image_info.set(src.name)
+            return True
+        except Exception as exc:
+            messagebox.showerror('Fondo de página', f'No se pudo abrir la fotografía: {exc}', parent=window)
+            return False
+
+    def choose_image():
+        if fields['background_type'].get() != 'imagen':
+            return
+        filename = filedialog.askopenfilename(parent=window, title='Elegir fondo de portada',
+            filetypes=[('Fotografías', '*.jpg *.jpeg *.png *.webp *.bmp *.tif *.tiff *.heic *.heif')])
+        if filename:
+            load_background_photo(filename)
+
+    def edit_background_image():
+        if fields['background_type'].get() != 'imagen':
+            return
+        photo_path = fields['background_image'].get()
+        if not photo_path:
+            messagebox.showinfo('Editar fotografía', 'Primero elige una fotografía de fondo.', parent=window)
+            return
+        def saved(edits):
+            background_edits[0] = validate_edits(edits)
+            schedule()
+        edit_photo(window, Path(photo_path), background_edits[0], saved)
+
+    # La selección de foto va inmediatamente debajo de Fondo, antes de la paleta.
+    row_image = tk.Frame(left, bg=SURFACE)
+    row_image.pack(fill='x', pady=(9, 3))
+    photo_button = tk.Button(row_image, text='Elegir foto…', command=choose_image,
+                             bg=ACCENT, fg=BG, activebackground='#84E9D1',
+                             activeforeground=BG, relief='flat', padx=12,
+                             pady=7, cursor='hand2', font=('Segoe UI', 9, 'bold'))
+    photo_button.pack(side='left')
+    edit_button = tk.Button(row_image, text='Editar foto ✎', command=edit_background_image,
+                            bg=PANEL, fg=TEXT, relief='flat', padx=10, pady=7,
+                            cursor='hand2', font=('Segoe UI', 9, 'bold'))
+    edit_button.pack(side='left', padx=(7, 0))
+    tk.Label(left, textvariable=image_info, bg=SURFACE, fg=MUTED,
+             font=('Segoe UI', 8), anchor='w').pack(fill='x', pady=(2, 6))
+
+    def update_photo_buttons(*_):
+        enabled = fields['background_type'].get() == 'imagen'
+        photo_button.configure(state='normal' if enabled else 'disabled',
+                               bg=ACCENT if enabled else '#304256',
+                               fg=BG if enabled else '#8494A4',
+                               cursor='hand2' if enabled else 'arrow')
+        editable = enabled and bool(fields['background_image'].get())
+        edit_button.configure(state='normal' if editable else 'disabled',
+                              cursor='hand2' if editable else 'arrow')
+    fields['background_type'].trace_add('write', update_photo_buttons)
+    fields['background_image'].trace_add('write', update_photo_buttons)
+    update_photo_buttons()
 
     # Los cuatro colores clásicos también aparecen dentro de Personalizar.
     # La selección de paleta cambia fondo y colores legibles del texto, pero
@@ -309,31 +388,6 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
                        value=value, bg=SURFACE, fg=TEXT, selectcolor=PANEL,
                        activebackground=SURFACE, activeforeground=ACCENT,
                        font=('Segoe UI', 9)).pack(side='left', padx=(0, 12))
-    image_info = tk.StringVar(value=Path(fields['background_image'].get()).name or 'Sin fotografía')
-
-    def choose_image():
-        filename = filedialog.askopenfilename(parent=window, title='Elegir fondo de portada',
-            filetypes=[('Fotografías', '*.jpg *.jpeg *.png *.webp *.bmp *.tif *.tiff *.heic *.heif')])
-        if not filename:
-            return
-        try:
-            src = Path(filename)
-            with Image.open(src) as image:
-                image.verify()
-            dest = image_dir / f'fondo_{uuid.uuid4().hex}{src.suffix.lower()}'
-            shutil.copyfile(src, dest)
-            fields['background_image'].set(str(dest))
-            fields['background_type'].set('imagen')
-            image_info.set(src.name)
-        except Exception as exc:
-            messagebox.showerror('Fondo de página', f'No se pudo abrir la fotografía: {exc}', parent=window)
-    row_image = tk.Frame(left, bg=SURFACE)
-    row_image.pack(fill='x', pady=(5,0))
-    tk.Button(row_image, text='Elegir foto…', command=choose_image,
-              bg=PANEL, fg=TEXT, relief='flat', padx=9, pady=5, cursor='hand2').pack(side='left')
-    tk.Label(row_image, textvariable=image_info, bg=SURFACE, fg=MUTED,
-             font=('Segoe UI', 8), width=21, anchor='w').pack(side='left', padx=(7,0))
-
     def text_input(element, caption):
         label(caption)
         row = tk.Frame(left, bg=SURFACE)
@@ -376,7 +430,7 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
         tk.Radiobutton(pick, text=text, variable=focused, value=key, bg=SURFACE,
                        fg=TEXT, selectcolor=PANEL, activebackground=SURFACE,
                        activeforeground=ACCENT, font=('Segoe UI', 9)).pack(side='left', padx=(0,10))
-    tk.Label(right, text='Haz clic donde quieras colocar el elemento elegido y arrástralo con precisión.',
+    tk.Label(right, text='Mueve el elemento elegido. También puedes arrastrar una foto a esta vista desde el Explorador.',
              bg=SURFACE, fg=MUTED, font=('Segoe UI', 9)).pack(anchor='w', pady=(0,5))
     photo_controls = tk.Frame(right,bg=SURFACE)
     photo_controls.pack(fill='x',pady=(3,8))
@@ -422,6 +476,7 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
             'title': fields['title'].get(), 'subtitle': fields['subtitle'].get(),
             'background_type': fields['background_type'].get(),
             'background_image': fields['background_image'].get(),
+            'background_edits': background_edits[0],
             'background_color': fields['background_color'].get(),
             'background_fill': fields['background_fill'].get(),
             'text_color': fields['text_color'].get(),
@@ -478,12 +533,17 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
             if spec['background_type'] == 'imagen':
                 preview_path = preview_source(spec['background_image'])
                 preview_spec['background_image'] = preview_path
-                if source_cache[0] != preview_path:
+                new_source_key = (preview_path, repr(sorted(background_edits[0].items())))
+                if source_cache[0] != new_source_key:
                     if source_cache[1] is not None:
                         source_cache[1].close()
                     with Image.open(preview_path) as loaded:
-                        source_cache[1] = loaded.convert('RGB')
-                    source_cache[0] = preview_path
+                        unedited = loaded.convert('RGB')
+                    try:
+                        source_cache[1] = apply_edits(unedited, background_edits[0]) if has_edits(background_edits[0]) else unedited.copy()
+                    finally:
+                        unedited.close()
+                    source_cache[0] = new_source_key
                     if blurred_cache[1] is not None:
                         blurred_cache[1].close()
                         blurred_cache[:] = [None, None]
@@ -500,7 +560,7 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
             bg_fields = ('background_type', 'background_color', 'background_fill',
                          'background_image', 'image_mode', 'image_zoom_x', 'image_zoom_y',
                          'image_x', 'image_y')
-            signature = ((iw, ih), tuple(preview_spec.get(key) for key in bg_fields))
+            signature = ((iw, ih), tuple(preview_spec.get(key) for key in bg_fields), repr(sorted(background_edits[0].items())))
             if signature != bg_cache[0] or bg_cache[1] is None:
                 fresh = render_custom_background(preview_spec, (iw, ih),
                                                   source_image=img_for_render,
@@ -571,6 +631,32 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
             positions[key+'_x']=round(min(1,max(0,(event.x-ox-x0)/max(1,x1-x0))),5)
             positions[key+'_y']=round(min(1,max(0,(event.y-oy-y0)/max(1,y1-y0))),5)
         schedule()
+
+    # Arrastrar una fotografía desde el Explorador directamente al papel.
+    # Tkinter no soporta arrastre de archivos externo sin TkDnD; al instalar
+    # tkinterdnd2 se integra en el mismo Tk, sin ventanas auxiliares.
+    def handle_file_drop(data: str) -> bool:
+        try:
+            candidates = window.tk.splitlist(data)
+        except tk.TclError:
+            candidates = (data,)
+        if len(candidates) != 1:
+            messagebox.showwarning('Arrastrar fotografía', 'Arrastra una sola fotografía a la portada.', parent=window)
+            return False
+        return load_background_photo(candidates[0])
+
+    window.revelo_drop_image = handle_file_drop  # Interfaz reutilizable para pruebas.
+    try:
+        from tkinterdnd2 import DND_FILES, TkinterDnD
+        TkinterDnD.require(root)
+        canvas.drop_target_register(DND_FILES)
+        canvas.dnd_bind('<<Drop>>', lambda event: 'copy' if handle_file_drop(event.data) else 'refuse_drop')
+        canvas.dnd_bind('<<DropEnter>>', lambda _event: 'copy')
+        canvas.dnd_bind('<<DropPosition>>', lambda _event: 'copy')
+        window.revelo_drop_enabled = True
+    except (ImportError, RuntimeError, tk.TclError, AttributeError):
+        # Si Windows no carga TkDnD, la selección «Elegir foto» sigue disponible.
+        window.revelo_drop_enabled = False
 
     canvas.bind('<Button-1>', on_drag)
     canvas.bind('<B1-Motion>', on_drag)

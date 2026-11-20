@@ -141,6 +141,12 @@ class PhotoEditor(tk.Toplevel):
         self._btn(rotate,'↕',lambda:self._transform('v')).pack(side='left')
         self._range(inside,'Enderezar', 'straighten', -15, 15, resolution=.1)
         self._text(inside,'AJUSTES DE IMAGEN',font=11,bold=True).pack(fill='x',pady=(18,6))
+        self.auto_btn = self._btn(inside, '', self._toggle_auto)
+        self.auto_btn.pack(fill='x', pady=(0, 7))
+        self._refresh_auto_button()
+        helper_auto = self._text(inside, 'Optimiza iluminación, color y nitidez de forma suave. Puedes desactivarlo.', color=MUTED)
+        helper_auto.configure(wraplength=266, justify='left')
+        helper_auto.pack(fill='x', pady=(0, 9))
         for key,title in [('brightness','Brillo'),('contrast','Contraste'),('saturation','Saturación'),('sharpness','Nitidez')]:
             low,high=LIMITS[key]
             self._range(inside,title,key,low,high,resolution=.05)
@@ -189,6 +195,21 @@ class PhotoEditor(tk.Toplevel):
         tk.Scale(box,from_=low,to=high,resolution=resolution,orient='horizontal',variable=variable,
                  command=updated,showvalue=False,bg=PANEL,fg=TEXT,troughcolor='#28405A',
                  highlightthickness=0,bd=0,activebackground=ACCENT,length=242).pack(fill='x')
+
+    def _refresh_auto_button(self):
+        if hasattr(self, 'auto_btn'):
+            active = bool(self.spec['auto_correct'])
+            self.auto_btn.configure(
+                text='✓ Corrección automática activada' if active else 'Corrección automática',
+                bg=ACCENT if active else PANEL2,
+                fg=BG if active else TEXT,
+            )
+
+    def _toggle_auto(self):
+        self.spec['auto_correct'] = not bool(self.spec['auto_correct'])
+        self._refresh_auto_button()
+        self.status.set('Corrección automática ' + ('activada' if self.spec['auto_correct'] else 'desactivada') + '. Puedes comparar con «Original».')
+        self._schedule()
 
     def _schedule(self):
         if self._after_job:
@@ -357,6 +378,7 @@ class PhotoEditor(tk.Toplevel):
 
     def reset(self):
         self.spec=dict(DEFAULT)
+        self._refresh_auto_button()
         for key,var in self._slider_vars.items():var.set(self.spec[key])
         self.crop_mode.set('Libre')
         self._result=False

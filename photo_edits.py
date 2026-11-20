@@ -11,7 +11,7 @@ from PIL import Image, ImageOps, ImageEnhance, ImageChops
 DEFAULT = {
     'turns': 0, 'flip_h': False, 'flip_v': False, 'straighten': 0.0,
     'crop': None, 'brightness': 1.0, 'contrast': 1.0,
-    'saturation': 1.0, 'sharpness': 1.0,
+    'saturation': 1.0, 'sharpness': 1.0, 'auto_correct': False,
 }
 LIMITS = {'brightness': (0.2, 2.5), 'contrast': (0.2, 2.5),
           'saturation': (0.0, 2.5), 'sharpness': (0.0, 3.0)}
@@ -28,7 +28,7 @@ def validate_edits(value: dict | None) -> dict:
         if type(value['turns']) is not int or not 0 <= value['turns'] <= 3:
             raise ValueError('Giro no válido')
         result['turns'] = value['turns']
-    for key in ('flip_h', 'flip_v'):
+    for key in ('flip_h', 'flip_v', 'auto_correct'):
         if key in value:
             if type(value[key]) is not bool:
                 raise ValueError('Volteo no válido')
@@ -84,6 +84,29 @@ def geometry_image(source: Image.Image, edits: dict | None) -> Image.Image:
     return image
 
 
+def automatic_photo_correction(source: Image.Image) -> Image.Image:
+    """Mejora fotográfica moderada y determinista, sin IA ni servicios externos.
+
+    Ajusta únicamente la luminancia (el color no se estira canal a canal),
+    y añade una corrección leve de saturación y nitidez. No modifica `source`.
+    No pretende replicar el algoritmo propietario de Fotos de Apple.
+    """
+    base = source.convert('RGB')
+    ycbcr = base.convert('YCbCr')
+    y, cb, cr = ycbcr.split()
+    balanced = ImageOps.autocontrast(y, cutoff=1)
+    # Corregimos parcialmente para evitar blancos quemados y sombras empastadas.
+    softer = Image.blend(y, balanced, .48)
+    balanced.close()
+    corrected = Image.merge('YCbCr', (softer, cb, cr)).convert('RGB')
+    y.close(); cb.close(); cr.close(); softer.close(); ycbcr.close(); base.close()
+    colored = ImageEnhance.Color(corrected).enhance(1.035)
+    corrected.close()
+    sharp = ImageEnhance.Sharpness(colored).enhance(1.09)
+    colored.close()
+    return sharp
+
+
 def apply_edits(source: Image.Image, edits: dict | None) -> Image.Image:
     """Genera la vista editada. El llamador conserva la propiedad de source."""
     spec = validate_edits(edits)
@@ -95,6 +118,8 @@ def apply_edits(source: Image.Image, edits: dict | None) -> Image.Image:
             box = (round(x0*w),round(y0*h), round(x1*w),round(y1*h))
             box = (max(0,box[0]),max(0,box[1]),min(w,max(box[0]+1,box[2])),min(h,max(box[1]+1,box[3])))
             nxt = image.crop(box); image.close(); image=nxt
+        if spec['auto_correct']:
+            nxt = automatic_photo_correction(image); image.close(); image = nxt
         for key, cls in (('brightness',ImageEnhance.Brightness),('contrast',ImageEnhance.Contrast),
                          ('saturation',ImageEnhance.Color),('sharpness',ImageEnhance.Sharpness)):
             if abs(spec[key]-1.0)>0.001:
