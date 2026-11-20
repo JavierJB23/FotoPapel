@@ -1,30 +1,57 @@
-REVELO v1.6.1 — AJUSTES DEL EDITOR DE PORTADAS Y CORRECCIÓN AUTOMÁTICA
-====================================================================
+REVELO v1.6.2 — FIX DE RECORTE, MINIATURAS Y GUÍAS DE ALINEACIÓN
+=================================================================
 
-CAMBIOS
-- En «Personalizar página», el selector ORIENTACIÓN aparece debajo de TIPO DE PÁGINA
-  y está sincronizado con el selector de la ventana principal.
-- Cuando FONDO = Color liso, «Elegir foto» y «Editar foto» quedan deshabilitados.
-- En modo Fotografía, «Elegir foto» se sitúa antes de PALETA DE COLORES y se
-  destaca en aguamarina. «Editar foto» abre el editor fotográfico completo.
-- En Windows también puedes arrastrar una imagen desde el Explorador a la vista
-  previa; esta función requiere tkinterdnd2, incorporado a la compilación.
-- En el editor de fotos aparece «Corrección automática»: mejora de tonos,
-  saturación y nitidez moderada, completamente local y reversible. No es el
-  algoritmo de Apple Fotos. Puedes activarla o desactivarla con el mismo botón.
-- El archivo de imagen original nunca se sustituye. Las instrucciones de
-  edición del fondo se conservan en .revelo y en los PDF reversibles.
+NOVEDADES
 
-PARA ACTUALIZAR GITHUB
-1. Conserva una copia de tu Revelo v1.6 o checkpoint estable anterior.
-2. Sube el contenido de este ZIP, manteniendo la carpeta tests y la ruta
-   .github/workflows/windows-exe.yml si viene incluida.
-3. Confirma el commit, entra en Actions y descarga Revelo-Windows-EXE.
-4. Extrae Revelo.exe y pruébalo. No hay que instalar Python.
+1) EDITOR FOTOGRÁFICO — BOTÓN «RECORTAR»
+   - Aparece a la izquierda de «Original (mantener)» y «Ver resultado».
+   - Sin una selección nueva está desactivado; cuando dibujas o modificas el
+     rectángulo de recorte se ilumina en crema.
+   - Al pulsar «Recortar» muestra inmediatamente la foto ya recortada.
+   - «Modificar recorte» permite volver a ajustar los límites.
+   - Los originales siguen intactos: confirma al pulsar «Guardar edición».
 
-PRUEBAS RECOMENDADAS
-- Abrir «+ Página > Personalizar», cambiar orientación y ver la hoja adaptarse.
-- Probar Color liso: «Elegir foto» debe estar desactivado.
-- Marcar Fotografía y elegir una foto o arrastrarla desde el Explorador.
-- «Editar foto» > «Corrección automática» > «Guardar edición».
-- Guardar .revelo y volver a abrirlo: la fotografía debe conservar sus ajustes.
+2) ORIENTACIÓN SINCRONIZADA EN TODAS LAS VISTAS
+   - Las miniaturas de «Fotos y PDF cargados» y de «Orden del contenido»
+     reflejan la orientación del papel actual (horizontal/vertical/automática).
+   - El refresco ocurre al cambiar orientación, formato de papel, encaje o
+     márgenes. No hace falta cerrar ni volver a abrir ninguna foto.
+   - Las miniaturas se procesan en resolución reducida para no ralentizar
+     los documentos con decenas de fotos; el PDF/Word usa resolución completa.
+   - También respeta las portadas personalizadas y las ediciones fotográficas.
+
+3) GUÍAS DE ALINEACIÓN MAGNÉTICAS EN PORTADAS/SEPARADORES
+   - Al mover texto o foto por el editor personalizado aparecen líneas
+     aguamarina al acercarse a los ejes centrales y a los bordes de la hoja.
+   - Existe una pequeña zona de atracción y retención de unos 22 píxeles
+     al abandonar cada guía. Así se puede colocar con precisión.
+   - Las líneas desaparecen cuando sueltas el ratón; NO se imprimen.
+   - No afecta a las posiciones ya guardadas ni a los archivos antiguos.
+
+INSTALAR EN WINDOWS (COMO SIEMPRE)
+
+1. Conserva una copia de tu ejecutable anterior estable.
+2. En tu repositorio GitHub de Revelo (JavierJB23/FotoPapel), sube
+   los archivos de la actualización sobre los anteriores.
+3. Los nuevos alignment_guides.py y thumbnail_preview.py van en la raíz
+   junto a main.py; test_v162_usability.py va dentro de tests/.
+4. Pulsa Commit changes y entra en Actions.
+5. Descarga Revelo-Windows-EXE cuando la compilación termine en verde,
+   descomprime el ZIP y abre Revelo.exe.
+
+No cambian las dependencias ni el archivo .github/workflows/windows-exe.yml.
+No se necesita instalar Python, ni modificar el QR, ni pagar licencias.
+
+PRUEBA RECOMENDADA
+- Arrastra un recorte: confirma que «Recortar» se ilumina en crema;
+  púlsalo, comprueba la imagen sin la zona descartada y, si quieres,
+  usa «Modificar recorte».
+- Abre una portada horizontal; cambia a vertical en el menú principal y
+  comprueba que las miniaturas de ambos paneles se actualizan.
+- En «Personalizar portada», selecciona título/foto; al acercarla al eje
+  horizontal o vertical aparecerá la guía aguamarina. Suelta y verifica
+  que la línea no aparece en la exportación.
+
+CHECKPOINT
+Versión candidata: Revelo v1.6.2. Conserva la versión STABLE anterior
+hasta validar este nuevo EXE en tu ordenador.

@@ -17,6 +17,7 @@ from special_pages import (CUSTOM_THEME, validate_special_spec, render_special_p
 from processor import printable_box
 from photo_edits import validate_edits, apply_edits, has_edits
 from photo_editor_ui import edit_photo
+from alignment_guides import guides_for_axis, magnetic_axis
 
 BG = '#0B1422'
 SURFACE = '#142236'
@@ -235,6 +236,10 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
     canvas_box = [0, 0, 1, 1]
     image_drag = [None]
     drag_text = [None]
+    # Las guías sólo aparecen durante el arrastre. Su ajuste magnético tiene
+    # histéresis (22 px) para evitar saltar al pasar lentamente por un eje.
+    alignment = [None, None]  # Guide eje X / eje Y
+    guide_hide_job = [None]
     label_color = MUTED
 
     def label(text):
@@ -586,6 +591,17 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
             active_label = {'title':'TÍTULO','subtitle':'SUBTÍTULO','image':'FOTOGRAFÍA'}[label_key]
             canvas.create_text(ox+9,oy+12,text=active_label,fill=ACCENT,
                                anchor='w',font=('Segoe UI',8,'bold'))
+            # Guías inteligentes visibles SOLO al alinear o arrastrar.
+            if alignment[0] is not None or alignment[1] is not None:
+                gx0, gy0, gx1, gy1 = (0,0,iw,ih) if label_key == 'image' else safe
+                if alignment[0] is not None:
+                    line_x = ox + gx0 + alignment[0].position * (gx1 - gx0)
+                    canvas.create_line(line_x, oy+gy0, line_x, oy+gy1,
+                                       fill=ACCENT, width=2, dash=(6,3),tags='guia-alineacion')
+                if alignment[1] is not None:
+                    line_y = oy + gy0 + alignment[1].position * (gy1 - gy0)
+                    canvas.create_line(ox+gx0, line_y, ox+gx1, line_y,
+                                       fill=ACCENT, width=2, dash=(6,3),tags='guia-alineacion')
         except Exception:
             canvas.delete('all')
             canvas.create_text(120,80,text='Elige una foto válida para mostrar la vista previa.',
@@ -611,6 +627,25 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
         window.revelo_page_mm = physical_mm
         schedule()
 
+    def _image_extent() -> tuple[float, float]:
+        """Tamaño proporcional de la imagen para alinear sus BORDES reales."""
+        source = source_cache[1]
+        if source is None or fields['background_type'].get() != 'imagen':
+            return (1.0, 1.0)
+        _, _, iw, ih = canvas_box
+        if min(iw, ih, source.width, source.height) <= 0:
+            return (1.0, 1.0)
+        contain = min(iw/source.width, ih/source.height)
+        return (source.width * contain * fields['image_zoom_x'].get() / iw,
+                source.height * contain * fields['image_zoom_y'].get() / ih)
+
+    def begin_drag(event):
+        if guide_hide_job[0] is not None:
+            window.after_cancel(guide_hide_job[0])
+            guide_hide_job[0] = None
+        alignment[:] = [None, None]
+        on_drag(event)
+
     def on_drag(event):
         key = focused.get()
         ox,oy,iw,ih = canvas_box
@@ -619,18 +654,40 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
         if key == 'image':
             if fields['background_type'].get() != 'imagen':
                 return
+            # Las fotos se mueven por su centro; los bordes reales también
+            # tienen anclajes cuando la fotografía es menor que la hoja.
+            raw_x = (event.x - ox) / iw
+            raw_y = (event.y - oy) / ih
             fields['image_mode'].set('Libre')
-            fields['image_x'].set(round(min(1,max(0,(event.x-ox)/iw)),5))
-            fields['image_y'].set(round(min(1,max(0,(event.y-oy)/ih)),5))
+            width, height = _image_extent()
+            x, alignment[0] = magnetic_axis(raw_x, iw, guides_for_axis(extent=width), alignment[0])
+            y, alignment[1] = magnetic_axis(raw_y, ih, guides_for_axis(extent=height), alignment[1])
+            fields['image_x'].set(round(x,5))
+            fields['image_y'].set(round(y,5))
         else:
             if not fields['show_'+key].get() or not fields[key].get():
                 return
             safe=printable_box((iw,ih),physical_mm,binding=True) if binding else (0,0,iw,ih)
             x0,y0,x1,y1=safe
-            # Sin cuadrículas, nodos ni pasos: píxeles continuos de la vista.
-            positions[key+'_x']=round(min(1,max(0,(event.x-ox-x0)/max(1,x1-x0))),5)
-            positions[key+'_y']=round(min(1,max(0,(event.y-oy-y0)/max(1,y1-y0))),5)
+            # Mover con precisión de píxel dentro del área protegida.
+            raw_x=(event.x-ox-x0)/max(1,x1-x0)
+            raw_y=(event.y-oy-y0)/max(1,y1-y0)
+            x, alignment[0] = magnetic_axis(raw_x, x1-x0, guides_for_axis(), alignment[0])
+            y, alignment[1] = magnetic_axis(raw_y, y1-y0, guides_for_axis(), alignment[1])
+            positions[key+'_x']=round(x,5)
+            positions[key+'_y']=round(y,5)
         schedule()
+
+    def finish_drag(_event=None):
+        # La guía permanece un instante, para que el usuario perciba que el
+        # centro ha encajado, y desaparece al soltar.
+        if guide_hide_job[0] is not None:
+            window.after_cancel(guide_hide_job[0])
+        def hide():
+            guide_hide_job[0]=None
+            alignment[:] = [None, None]
+            schedule()
+        guide_hide_job[0]=window.after(180,hide)
 
     # Arrastrar una fotografía desde el Explorador directamente al papel.
     # Tkinter no soporta arrastre de archivos externo sin TkDnD; al instalar
@@ -658,8 +715,9 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
         # Si Windows no carga TkDnD, la selección «Elegir foto» sigue disponible.
         window.revelo_drop_enabled = False
 
-    canvas.bind('<Button-1>', on_drag)
+    canvas.bind('<ButtonPress-1>', begin_drag)
     canvas.bind('<B1-Motion>', on_drag)
+    canvas.bind('<ButtonRelease-1>', finish_drag)
     canvas.bind('<Configure>', schedule)
     for var in fields.values():
         var.trace_add('write', schedule)
@@ -687,6 +745,10 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
         for var, trace in setting_traces:
             try: var.trace_remove('write', trace)
             except tk.TclError: pass
+        if guide_hide_job[0] is not None:
+            try:window.after_cancel(guide_hide_job[0])
+            except tk.TclError:pass
+            guide_hide_job[0] = None
         if refresh_job[0] is not None:
             try:window.after_cancel(refresh_job[0])
             except tk.TclError:pass

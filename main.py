@@ -29,6 +29,7 @@ from special_pages import KINDS, THEMES, CUSTOM_THEME, validate_special_spec, sa
 from ordering_rules import cover_path, anchored_order, move_item, click_move
 from custom_editor import edit_custom_page
 from photo_editor_ui import edit_photo
+from thumbnail_preview import render_photo_thumbnail
 from photo_edits import validate_edits, has_edits, apply_edits
 import qrcode
 
@@ -109,6 +110,7 @@ class ReveloApp:
         self.pages: list[Path] = []
         self.thumbnails: dict[Path, ImageTk.PhotoImage] = {}
         self.thumbnails_small: dict[Path, ImageTk.PhotoImage] = {}
+        self._thumbnail_settings_job = None
         self.details: dict[Path, tuple[int, int]] = {}
         self.selected: Path | None = None  # selección de biblioteca
         self.order_selected: Path | None = None  # independiente, selección en lista ordenada
@@ -148,6 +150,9 @@ class ReveloApp:
         self._layout()
         self._update_overview()
         self.per_sheet.trace_add("write", self._on_per_sheet_changed)
+        # Las tarjetas muestran siempre el papel y la orientación actuales.
+        for var in (self.paper, self.orientation, self.fit, self.binding):
+            var.trace_add("write", self._on_thumbnail_settings_changed)
         self.root.after(120, self._poll)
 
     def _style(self):
@@ -366,6 +371,26 @@ class ReveloApp:
             self.preview_index = min(self.preview_index, max(0, len(self._groups()) - 1))
             self._show_preview_page()
 
+    def _on_thumbnail_settings_changed(self, *_):
+        """Sincroniza miniaturas de ambos paneles con los ajustes de impresión.
+
+        Agrupa los cambios rápidos del desplegable para no reconstruir las
+        tarjetas varias veces durante un mismo gesto.
+        """
+        job = getattr(self, '_thumbnail_settings_job', None)
+        if job is not None:
+            self.root.after_cancel(job)
+        self._thumbnail_settings_job = self.root.after(110, self._refresh_page_thumbnails)
+
+    def _refresh_page_thumbnails(self):
+        self._thumbnail_settings_job = None
+        if not self.paths or self.is_busy:
+            return
+        self.thumbnails.clear()
+        self.thumbnails_small.clear()
+        self.render_library()
+        self.render_order()
+
     def _on_per_sheet_changed(self, *_):
         self.render_order()
 
@@ -400,10 +425,10 @@ class ReveloApp:
         candidate = (Path(self.special_temp.name) / f'pagina_{uuid.uuid4().hex}.png') if new else path
         landscape = self._special_landscape(path)
         save_special_thumbnail(candidate, spec, landscape=landscape)
+        self.special_pages[candidate] = spec
         self.thumbnails.pop(candidate, None)
         self.thumbnails_small.pop(candidate, None)
         self._thumbnail(candidate)
-        self.special_pages[candidate] = spec
         self.path_labels[candidate] = ('Página en blanco' if spec['kind'] == 'Página en blanco'
                                        else f"{spec['kind']}: {spec['title'] or 'Sin título'}")
         self.details[candidate] = source_dimensions(candidate)
@@ -515,20 +540,37 @@ class ReveloApp:
         title_input.focus_set()
 
     def _thumbnail(self, path: Path) -> ImageTk.PhotoImage:
+        """Miniatura de la hoja REAL, no de la orientación de la foto fuente.
+
+        Renderiza en tamaño diminuto: no exporta ni modifica el archivo de
+        origen y aplica también los recortes y las portadas personalizadas.
+        """
         if path not in self.thumbnails:
-            with Image.open(path) as original:
-                im = ImageOps.exif_transpose(original)
-                if path in self.photo_edits:
-                    processed = apply_edits(im.convert('RGB'), self.photo_edits[path])
-                    im = processed
-                im.thumbnail((150, 108), Image.Resampling.LANCZOS)
-                rgba = im.convert("RGBA")
-                background = Image.new("RGBA", (150, 108), (29, 45, 67, 255))
-                x = (background.width - rgba.width) // 2
-                y = (background.height - rgba.height) // 2
-                background.alpha_composite(rgba, (x, y))
-                self.thumbnails[path] = ImageTk.PhotoImage(background.convert("RGB"))
-                self.thumbnails_small[path] = ImageTk.PhotoImage(background.convert("RGB").resize((124, 92), Image.Resampling.LANCZOS))
+            opts = self._options()
+            index = self.pages.index(path) if path in self.pages else 0
+            try:
+                # Las portadas necesitan más píxeles al dibujar tipografías;
+                # después se reducen para que sus letras no desaparezcan.
+                if path in self.special_pages:
+                    picture, _, _ = render_layout_page((path,), opts,
+                                       preview_max_size=(360,255), page_index=index)
+                    picture.thumbnail((150,108),Image.Resampling.LANCZOS)
+                else:
+                    picture = render_photo_thumbnail(path, opts, page_index=index)
+            except (OSError, ValueError, RuntimeError):
+                # Un archivo inaccesible no debe impedir mostrar las tarjetas.
+                with Image.open(path) as source:
+                    picture=ImageOps.contain(ImageOps.exif_transpose(source).convert('RGB'),
+                                             (150,108), Image.Resampling.LANCZOS)
+            try:
+                background=Image.new('RGB',(150,108), (29,45,67))
+                background.paste(picture,((150-picture.width)//2,(108-picture.height)//2))
+                self.thumbnails[path]=ImageTk.PhotoImage(background)
+                self.thumbnails_small[path]=ImageTk.PhotoImage(
+                     background.resize((124,92), Image.Resampling.LANCZOS))
+            finally:
+                picture.close()
+                background.close()
         return self.thumbnails[path]
 
     def edit_photo_dialog(self, path: Path):
@@ -747,24 +789,33 @@ class ReveloApp:
         was_empty = not self.paths
         count = 0
         for path, dims, label, origin in items:
-            try:
-                self._thumbnail(path)
-            except (OSError, ValueError, SyntaxError) as error:
-                errors.append(f"{label}: no se pudo mostrar ({error})")
-                continue
+            # Registrar primero los metadatos: la miniatura debe interpretar
+            # la portada, las ediciones y la procedencia del PDF desde el
+            # momento de su creación. Antes se generaba demasiado pronto.
             self.details[path] = dims
             self.path_labels[path] = label
             if path in (specials or {}):
                 self.special_pages[path] = specials[path]
             if path in (edits or {}):
                 self.photo_edits[path] = edits[path]
-                self.thumbnails.pop(path, None)
-                self.thumbnails_small.pop(path, None)
-                self._thumbnail(path)
             if origin is not None:
                 self.pdf_origins[path] = origin
             self.paths.append(path)
             self.pages.append(path)
+            try:
+                self._thumbnail(path)
+            except (OSError, ValueError, SyntaxError) as error:
+                self.paths.remove(path)
+                self.pages.remove(path)
+                self.details.pop(path, None)
+                self.path_labels.pop(path, None)
+                self.pdf_origins.pop(path, None)
+                self.special_pages.pop(path, None)
+                self.photo_edits.pop(path, None)
+                self.thumbnails.pop(path, None)
+                self.thumbnails_small.pop(path, None)
+                errors.append(f"{label}: no se pudo mostrar ({error})")
+                continue
             count += 1
         if count and was_empty and detected_paper:
             self.paper.set(detected_paper)

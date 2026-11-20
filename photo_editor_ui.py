@@ -8,7 +8,7 @@ from PIL import Image, ImageOps, ImageTk
 
 from photo_edits import DEFAULT, LIMITS, validate_edits, apply_edits, geometry_image, auto_white_crop
 
-BG='#0B1422'; PANEL='#142236'; PANEL2='#1B2D43'; BORDER='#304660'
+BG='#0B1422'; PANEL='#142236'; PANEL2='#1B2D43'; BORDER='#304660'; CREAM='#F6E5C4'
 ACCENT='#4CD9B5'; TEXT='#F2F7FC'; MUTED='#9FB6C9'
 
 ASPECTS = {
@@ -43,6 +43,7 @@ class PhotoEditor(tk.Toplevel):
         self._drag=None
         self._compare=False
         self._result=False
+        self._confirmed_crop=tuple(self.spec['crop']) if self.spec['crop'] else None
         self.crop_mode=tk.StringVar(value='Libre')
         self.status=tk.StringVar(value='Arrastra sobre la foto para recortar; también puedes mover las cuatro esquinas.')
         self.keep_ratio=tk.BooleanVar(value=True)
@@ -166,13 +167,18 @@ class PhotoEditor(tk.Toplevel):
         self.original_btn.bind('<ButtonPress-1>',self._original_press)
         self.original_btn.bind('<ButtonRelease-1>',self._original_release)
         self.original_btn.bind('<Leave>',self._original_release)
+        # A la izquierda de Original / Ver resultado: confirma el recorte y
+        # presenta inmediatamente la imagen final, sin alterar el original.
+        self.crop_btn=self._btn(top,'✂ Recortar',self._confirm_crop)
+        self.crop_btn.pack(side='right',padx=(0,7))
+        self._refresh_crop_button()
         self.canvas=tk.Canvas(right,bg='#0E1929',highlightthickness=0,bd=0,cursor='crosshair')
         self.canvas.pack(fill='both',expand=True,pady=(10,5))
         self.canvas.bind('<Configure>',lambda _e:self._display())
         self.canvas.bind('<ButtonPress-1>',self._crop_press)
         self.canvas.bind('<B1-Motion>',self._crop_move)
         self.canvas.bind('<ButtonRelease-1>',self._crop_release)
-        self._text(right,'Recorta moviendo las esquinas o dibujando una zona nueva. Cambia a «Ver resultado» para revisar.',
+        self._text(right,'Marca el área y pulsa «Recortar» (crema) para ver el corte. Puedes volver a modificarlo.',
                    color=MUTED).pack(fill='x')
         tk.Label(self,textvariable=self.status,fg=ACCENT,bg=BG,font=('Segoe UI',10),anchor='w').pack(side='bottom',fill='x',padx=20)
         self._bind_wheel(inside)
@@ -323,6 +329,7 @@ class PhotoEditor(tk.Toplevel):
         x0,x1=sorted((start[0],end[0]));y0,y1=sorted((start[1],end[1]))
         if x1-x0<.01 or y1-y0<.01:return
         self.spec['crop']=[round(x0,5),round(y0,5),round(x1,5),round(y1,5)]
+        self._refresh_crop_button()
         self._display()
 
     def _crop_release(self,_event):
@@ -338,10 +345,15 @@ class PhotoEditor(tk.Toplevel):
         else:
             rh=1.;rw=min(1,target/src)
         self.spec['crop']=[(1-rw)/2,(1-rh)/2,(1+rw)/2,(1+rh)/2]
+        self._refresh_crop_button()
         self._display()
 
     def _clear_crop(self):
         self.spec['crop']=None
+        self._confirmed_crop=None
+        self._result=False
+        self.result_btn.configure(text='Ver resultado')
+        self._refresh_crop_button()
         self._display()
 
     def _auto_white(self):
@@ -352,6 +364,9 @@ class PhotoEditor(tk.Toplevel):
         if box:
             self.spec['crop']=box
             self.crop_mode.set('Libre')
+            self._result=False
+            self.result_btn.configure(text='Ver resultado')
+            self._refresh_crop_button()
             self.status.set('Borde blanco detectado. Comprueba el recorte y guarda cuando quieras.')
             self._display()
         else:self.status.set('No se ha detectado un marco blanco que pueda quitarse con seguridad.')
@@ -361,8 +376,36 @@ class PhotoEditor(tk.Toplevel):
         elif mode=='v':self.spec['flip_v']=not self.spec['flip_v']
         else:self.spec['turns']=(self.spec['turns']+mode)%4
         self.spec['crop']=None
+        self._confirmed_crop=None
+        self._result=False
+        self.result_btn.configure(text='Ver resultado')
+        self._refresh_crop_button()
         self.crop_mode.set('Libre')
         self._render()
+
+    def _refresh_crop_button(self):
+        if not hasattr(self, 'crop_btn'):
+            return
+        selected = tuple(self.spec['crop']) if self.spec['crop'] else None
+        ready = selected is not None and selected != self._confirmed_crop
+        self.crop_btn.configure(state='normal' if ready else 'disabled',
+                                bg=CREAM if ready else '#35445A',
+                                fg=BG if ready else '#95A4B7',
+                                activebackground='#FFF1D6' if ready else '#35445A',
+                                cursor='hand2' if ready else 'arrow')
+
+    def _confirm_crop(self):
+        if self.spec['crop'] is None:
+            return
+        crop = tuple(self.spec['crop'])
+        if crop == self._confirmed_crop:
+            return
+        self._confirmed_crop = crop
+        self._result=True
+        self.result_btn.configure(text='Modificar recorte')
+        self._refresh_crop_button()
+        self.status.set('Recorte aplicado en la vista. Es reversible: usa «Modificar recorte» o «Restablecer original».')
+        self._display()
 
     def _toggle_result(self):
         self._result=not self._result
@@ -382,6 +425,8 @@ class PhotoEditor(tk.Toplevel):
         for key,var in self._slider_vars.items():var.set(self.spec[key])
         self.crop_mode.set('Libre')
         self._result=False
+        self._confirmed_crop=None
+        self._refresh_crop_button()
         self.result_btn.configure(text='Ver resultado')
         self.status.set('Edición restablecida. Tu archivo original sigue intacto.')
         self._render()
