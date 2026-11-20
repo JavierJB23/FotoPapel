@@ -34,6 +34,8 @@ from photo_edits import validate_edits, has_edits, apply_edits
 import qrcode
 from advanced_layout import (TEMPLATES, NUMBER_POSITIONS, CAPTION_PLACEMENTS,
                              validate_caption, has_caption, numbers_for_groups, book_spreads)
+from caption_editor import edit_caption
+from book_renderer import render_book
 try:
     from tkinterdnd2 import DND_FILES, TkinterDnD
 except ImportError:  # El código también puede probarse sin TkDND.
@@ -648,54 +650,25 @@ class ReveloApp:
             self.import_paths([Path(f) for f in names])
 
     def caption_dialog(self, path: Path):
-        """Pie de foto de dos líneas: siempre editable, sin tocar el archivo origen."""
+        """Editor reversible de texto sin bandas opacas, con posición libre."""
         if self.is_busy or path not in self.paths or path in self.special_pages:
             return
-        spec = validate_caption(self.captions.get(path))
-        dialog = tk.Toplevel(self.root)
-        dialog.title("Revelo · Texto y pie de foto")
-        dialog.configure(bg=BG)
-        dialog.geometry("580x420")
-        dialog.minsize(480, 365)
-        box = tk.Frame(dialog, bg=BG, padx=23, pady=20)
-        box.pack(fill="both", expand=True)
-        self._label(box, "TEXTO Y PIE DE FOTO", size=16, weight="bold").pack(anchor="w")
-        self._label(box, "Añade un título y una descripción, fecha o lugar. Son opcionales.",
-                    color=MUTED, size=9).pack(anchor="w", pady=(7, 14))
-        title = tk.StringVar(value=spec["title"])
-        detail = tk.StringVar(value=spec["detail"])
-        placement = tk.StringVar(value=spec["placement"])
-        for label, var in (("TÍTULO", title), ("DESCRIPCIÓN / LUGAR / FECHA", detail)):
-            self._label(box, label, color=MUTED, weight="bold", size=9).pack(anchor="w", pady=(10, 4))
-            entry = tk.Entry(box, textvariable=var, bg=SURFACE_2, fg=TEXT,
-                             font=("Segoe UI", 11), insertbackground=ACCENT,
-                             relief="flat")
-            entry.pack(fill="x", ipady=7)
-        self._label(box, "UBICACIÓN", color=MUTED, weight="bold", size=9).pack(anchor="w", pady=(12, 5))
-        ttk.Combobox(box, textvariable=placement, values=list(CAPTION_PLACEMENTS),
-                     state="readonly", style="Custom.TCombobox").pack(fill="x")
-        controls = tk.Frame(box, bg=BG)
-        controls.pack(side="bottom", fill="x", pady=(14, 0))
-        self._button(controls, "Cancelar", dialog.destroy, small=True).pack(side="right")
-        def save():
-            try:
-                clean = validate_caption({"title": title.get(), "detail": detail.get(),
-                                          "placement": placement.get()})
-            except ValueError as exc:
-                messagebox.showwarning("Pie de foto", str(exc))
-                return
+        original = validate_caption(self.captions.get(path))
+
+        def save(clean):
             if has_caption(clean):
                 self.captions[path] = clean
             else:
                 self.captions.pop(path, None)
-            dialog.destroy()
             self.thumbnails.clear()
             self.thumbnails_small.clear()
             self.render_library()
             self.render_order()
-            self.feedback.set("Pie de foto actualizado. La imagen original no se modifica.")
-        self._button(controls, "Guardar texto", save, accent=True, small=True).pack(side="right", padx=(0, 8))
-        dialog.bind("<Escape>", lambda event: dialog.destroy())
+            if self.preview_window is not None and self.preview_window.winfo_exists():
+                self._show_preview_page()
+            self.feedback.set('Pie de foto actualizado. La fotografía original no se modifica.')
+
+        edit_caption(self.root, path, original, self._options(), save)
 
     def numbering_dialog(self):
         """Numeración opcional, independiente del orden físico de encuadernación."""
@@ -1419,7 +1392,7 @@ class ReveloApp:
         self._show_preview_page()
 
     def _render_open_book(self, groups, spread):
-        """Dos hojas cara a cara. Primera hoja a la derecha, como un libro."""
+        """Vista de álbum físico: tapa aislada y páginas con lomo, sin afectar PDF."""
         pages = []
         numbers = numbers_for_groups(groups, self.special_pages,
                                      enabled=self.numbering_enabled.get(),
@@ -1430,28 +1403,11 @@ class ReveloApp:
                 pages.append(None)
             else:
                 im, _, _ = render_layout_page(groups[index], self._options(),
-                                               preview_max_size=(640, 680), page_index=index,
+                                               preview_max_size=(620, 670), page_index=index,
                                                printed_number=numbers[index])
                 pages.append(im)
         try:
-            active = [im for im in pages if im is not None]
-            base_w = max(im.width for im in active)
-            base_h = max(im.height for im in active)
-            gutter = max(8, base_w // 35)
-            result = Image.new("RGB", (base_w*2 + gutter, base_h+16), (17,30,46))
-            draw = ImageDraw.Draw(result)
-            for position, im in enumerate(pages):
-                x = position * (base_w+gutter)
-                if im is None:
-                    draw.rectangle((x, 8, x+base_w-1, base_h+7), fill=(236,231,220))
-                    continue
-                x += (base_w-im.width)//2
-                y = 8+(base_h-im.height)//2
-                draw.rectangle((x+3,y+3,x+im.width+3,y+im.height+3),fill=(9,20,31))
-                result.paste(im,(x,y))
-            seam = base_w + gutter//2
-            draw.line((seam,4,seam,base_h+11),fill=(72,90,104),width=3)
-            return result
+            return render_book(tuple(pages), cover=(spread[0] is None))
         finally:
             for im in pages:
                 if im is not None:

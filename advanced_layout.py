@@ -4,6 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Sequence
 from PIL import Image, ImageDraw, ImageFont
+from special_pages import FONT_CHOICES, _font as font_family
 
 TEMPLATES = (
     "Cuadrícula",
@@ -13,23 +14,53 @@ TEMPLATES = (
 )
 TEMPLATE_PHOTOS = 3
 NUMBER_POSITIONS = ("Exterior", "Centro", "Izquierda", "Derecha")
-CAPTION_PLACEMENTS = ("Debajo", "Sobre foto")
+CAPTION_PLACEMENTS = ("Debajo", "Sobre foto", "Personalizado")
+CAPTION_ALIGNMENTS = ("Izquierda", "Centro", "Derecha")
 
 
 def validate_caption(spec: dict | None) -> dict:
-    """Valida metadatos que pueden proceder de PDF o .revelo no confiables."""
+    """Valida pies de foto nuevos y antiguos sin romper los PDF reversibles."""
     if spec is None:
         return {"title": "", "detail": "", "placement": "Debajo"}
     if not isinstance(spec, dict):
         raise ValueError("El pie de foto debe ser un objeto")
     title, detail, placement = spec.get("title", ""), spec.get("detail", ""), spec.get("placement", "Debajo")
-    if not isinstance(title, str) or len(title) > 120 or any(ord(c) < 32 and c not in "\t\n" for c in title):
-        raise ValueError("Título del pie de foto incorrecto")
-    if not isinstance(detail, str) or len(detail) > 240 or any(ord(c) < 32 and c not in "\t\n" for c in detail):
-        raise ValueError("Descripción del pie de foto incorrecta")
+    for value, label, limit in ((title, "Título", 120), (detail, "Descripción", 240)):
+        if not isinstance(value, str) or len(value) > limit or any(ord(c) < 32 and c not in "\t\n" for c in value):
+            raise ValueError(f"{label} del pie de foto incorrecto")
     if placement not in CAPTION_PLACEMENTS:
         raise ValueError("Ubicación del pie de foto desconocida")
-    return {"title": title.strip(), "detail": detail.strip(), "placement": placement}
+    clean = {"title": title.strip(), "detail": detail.strip(), "placement": placement}
+    # Mantén el formato anterior si no se suministraron campos adicionales:
+    # antiguos proyectos/PDF conservan sus datos sin cambios.
+    for key in ("title_font", "detail_font"):
+        if key in spec:
+            if not isinstance(spec[key], str) or spec[key] not in FONT_CHOICES:
+                raise ValueError("Tipo de letra del pie de foto desconocido")
+            clean[key] = spec[key]
+    for key in ("title_size", "detail_size"):
+        if key in spec:
+            val = spec[key]
+            if isinstance(val, bool) or not isinstance(val, int) or not 6 <= val <= 72:
+                raise ValueError("Tamaño del pie de foto fuera de rango")
+            clean[key] = val
+    for key in ("title_color", "detail_color"):
+        if key in spec:
+            val = spec[key]
+            if not isinstance(val, str) or len(val) != 7 or val[0] != "#" or any(ch not in "0123456789ABCDEFabcdef" for ch in val[1:]):
+                raise ValueError("Color de pie de foto incorrecto")
+            clean[key] = val.upper()
+    if "align" in spec:
+        if spec["align"] not in CAPTION_ALIGNMENTS:
+            raise ValueError("Alineación del pie de foto desconocida")
+        clean["align"] = spec["align"]
+    for key in ("title_x", "title_y", "detail_x", "detail_y"):
+        if key in spec:
+            val = spec[key]
+            if isinstance(val, bool) or not isinstance(val, (int, float)) or not 0 <= val <= 1:
+                raise ValueError("Posición de pie de foto fuera de rango")
+            clean[key] = round(float(val), 5)
+    return clean
 
 
 def has_caption(spec: dict | None) -> bool:
@@ -106,67 +137,151 @@ def book_spreads(count: int) -> list[tuple[int | None, int | None]]:
     return results
 
 
-def _font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    name = "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf"
-    try:
-        return ImageFont.truetype(name, max(9, size))
-    except OSError:
-        return ImageFont.load_default()
+def _font(size: int, bold: bool = False, family: str = "Georgia"):
+    return font_family(max(9, int(size)), bold=bold, family=family)
+
+
+def _px_size(spec: dict, key: str, mm_to_px: float, cell_width: int) -> int:
+    pt = spec.get(key, 12 if key == 'title_size' else 9)
+    # Tamaño en puntos tipográficos. Reducción proporcional en celdas pequeñas,
+    # para que una hoja de 3, 6 o 9 fotos no termine dominada por texto.
+    return max(9, min(round(pt * mm_to_px * 25.4 / 72),
+                      max(9, round(cell_width * (.075 if key == 'title_size' else .062)))))
+
+
+def _wrap_text(draw: ImageDraw.ImageDraw, text: str, font, width: int, max_lines: int) -> list[str]:
+    """División en líneas sin fondos ni truncado prematuro; limita al espacio."""
+    lines: list[str] = []
+    for paragraph in text.splitlines() or ['']:
+        words = paragraph.split()
+        if not words:
+            lines.append('')
+            continue
+        current = ''
+        for word in words:
+            candidate = (current + ' ' + word).strip()
+            if draw.textlength(candidate, font=font) <= width:
+                current = candidate
+            else:
+                if current:
+                    lines.append(current)
+                    current = ''
+                # Palabra excesivamente larga: cortar dentro de la celda.
+                for char in word:
+                    if current and draw.textlength(current + char, font=font) > width:
+                        lines.append(current)
+                        current = ''
+                    current += char
+        if current:
+            lines.append(current)
+    if len(lines) > max_lines:
+        lines = lines[:max_lines]
+        last = lines[-1]
+        while last and draw.textlength(last + '…', font=font) > width:
+            last = last[:-1]
+        lines[-1] = last + '…'
+    return lines
 
 
 def footer_height_px(cell_height: int, px_per_mm: float, spec: dict | None) -> int:
-    if not has_caption(spec) or spec.get("placement") == "Sobre foto":
+    if not has_caption(spec) or spec.get("placement") != "Debajo":
         return 0
-    # Hasta dos líneas con tamaño legible sin tragarse la composición.
-    return max(12, min(round(px_per_mm*13), round(cell_height*0.23)))
+    has_two = bool(spec.get('title')) and bool(spec.get('detail'))
+    title_size = _px_size(spec, 'title_size', px_per_mm, max(20, cell_height))
+    detail_size = _px_size(spec, 'detail_size', px_per_mm, max(20, cell_height))
+    ideal = round(px_per_mm * (15 if has_two else 9))
+    # Deja al menos 68 % de la celda para la imagen.
+    return max(14, min(round(cell_height*.32), max(ideal, title_size+detail_size+8)))
 
 
-def _ellipsize(draw: ImageDraw.ImageDraw, text: str, font, max_width: int) -> str:
-    s = " ".join(text.split())
-    if draw.textlength(s, font=font) <= max_width:
-        return s
-    while s and draw.textlength(s+"…", font=font) > max_width:
-        s = s[:-1]
-    return s + "…" if s else ""
+def _draw_text_region(draw: ImageDraw.ImageDraw, text: str, font, color: str,
+                      region: tuple[int,int,int,int], *, align: str, max_lines: int,
+                      family: str = 'Georgia', bold: bool = False) -> None:
+    x0,y0,x1,y1 = region
+    width, height = x1-x0, y1-y0
+    if not text or width <= 10 or height <= 8:
+        return
+    for _ in range(20):
+        line_height = max(10, round(font.size*1.19))
+        lines = _wrap_text(draw, text, font, width, max_lines=max_lines)
+        if len(lines)*line_height <= height or font.size <= 9:
+            break
+        font = _font(max(9,font.size-1), family=family, bold=bold)
+    start_y = y0 + max(0, (height - len(lines)*line_height)//2)
+    for index, line in enumerate(lines):
+        length=round(draw.textlength(line,font=font))
+        if align == "Derecha":
+            x = x1-length
+        elif align == "Centro":
+            x = x0 + (width-length)//2
+        else:
+            x=x0
+        draw.text((x,start_y+index*line_height),line,fill=color,font=font)
 
 
 def draw_caption(sheet: Image.Image, rect: tuple[int,int,int,int], spec: dict | None,
-                 *, mode: str, px_per_mm: float) -> None:
+                 *, mode: str, px_per_mm: float,
+                 below_start_y: int | None = None) -> None:
+    """Texto sin paneles opacos, dentro de su celda y sin invadir otras fotos."""
     if not has_caption(spec):
         return
     x0,y0,x1,y1 = rect
-    w, h = x1-x0, y1-y0
+    w,h = x1-x0,y1-y0
     if min(w,h) < 18:
         return
-    title = spec.get("title", "")
-    detail = spec.get("detail", "")
-    text_size = max(10, min(42, round(px_per_mm*2.65), round(w*.055)))
-    title_font = _font(text_size, bold=True)
-    detail_font = _font(max(9, round(text_size*.78)))
-    caption_h = footer_height_px(h, px_per_mm, spec)
-    if mode == "Sobre foto":
-        # Bloque legible y discreto encima de una fotografía.
-        caption_h = max(24, min(h//3, max(round(px_per_mm*13), text_size*3)))
-    start_y = y1-caption_h
-    drawing = ImageDraw.Draw(sheet, "RGBA")
-    if mode == "Sobre foto":
-        drawing.rectangle((x0,start_y,x1,y1), fill=(9,23,34,210))
-        foreground = (255,255,255,255)
-        foreground2 = (215,230,235,255)
-    else:
-        drawing.rectangle((x0,start_y,x1,y1), fill=(247,240,227,255))
-        foreground = (30,48,61,255)
-        foreground2 = (70,85,93,255)
-    pad = max(5, round(px_per_mm*1.3))
-    line_height = max(12, round(text_size*1.18))
-    if title:
-        drawing.text((x0+pad, start_y+pad), _ellipsize(drawing,title,title_font,w-2*pad),
-                     fill=foreground,font=title_font)
-    if detail:
-        dy = start_y + pad + (line_height if title else 0)
-        if dy + detail_font.size + 1 <= y1:
-            drawing.text((x0+pad,dy),_ellipsize(drawing,detail,detail_font,w-2*pad),
-                         fill=foreground2,font=detail_font)
+    spec = validate_caption(spec)
+    # Dibujo sobre una copia de la celda: evita que textos muy largos salgan
+    # de ella y tapen otras fotografías en composiciones asimétricas.
+    tile = sheet.crop(rect)
+    try:
+        draw=ImageDraw.Draw(tile)
+        pad=max(4, round(px_per_mm*1.2))
+        max_width=w-2*pad
+        align=spec.get('align','Centro' if mode == 'Personalizado' else 'Izquierda')
+        title=spec.get('title','')
+        detail=spec.get('detail','')
+        sizes={}
+        fonts={}
+        for key in ('title','detail'):
+            sizes[key]=_px_size(spec,key+'_size',px_per_mm,w)
+            fonts[key]=_font(sizes[key],bold=(key=='title'),family=spec.get(key+'_font','Georgia'))
+        if mode=='Personalizado':
+            for key,txt in (('title',title),('detail',detail)):
+                if not txt:
+                    continue
+                px=round(w*spec.get(key+'_x',.5))
+                py=round(h*spec.get(key+'_y',.85 if key=='title' else .93))
+                height=min(h-2*pad,max(sizes[key]*4,round(h*.22)))
+                rw=min(max_width,max(40,round(w*.86)))
+                # Centro del bloque visual = coordenadas arrastradas.
+                left=max(pad,min(w-pad-rw,px-rw//2))
+                top=max(pad,min(h-pad-height,py-height//2))
+                _draw_text_region(draw,txt,fonts[key],spec.get(key+'_color','#FFFFFF'),
+                                  (left,top,left+rw,top+height),align=align,max_lines=3,
+                                  family=spec.get(key+'_font','Georgia'),bold=(key=='title'))
+        else:
+            # El espacio de texto inferior se reserva únicamente en «Debajo».
+            # Cuando está superpuesto, se usa la parte baja de la foto misma.
+            block_h=footer_height_px(h,px_per_mm,spec) if mode=='Debajo' else min(round(h*.30), max(24,round(px_per_mm*15)))
+            start=max(pad,h-block_h)
+            if mode == 'Debajo' and below_start_y is not None:
+                start=max(pad,min(h-pad-12,below_start_y-y0))
+                block_h=max(12,min(h-start,footer_height_px(h,px_per_mm,spec)))
+            if title and detail:
+                end=min(h-pad,start+block_h)
+                split=max(start+9,min(end-8,start+round(block_h*.52)))
+                regions=((title,(pad,start,w-pad,split)),(detail,(pad,split,w-pad,end)))
+            elif title:
+                regions=((title,(pad,start,w-pad,min(h-pad,start+block_h))),)
+            else:
+                regions=((detail,(pad,start,w-pad,min(h-pad,start+block_h))),)
+            for key,(text, region) in zip(('title','detail') if title and detail else (('title',) if title else ('detail',)),regions):
+                _draw_text_region(draw,text,fonts[key],spec.get(key+'_color','#FFFFFF' if mode=='Sobre foto' else '#253447'),
+                                  region,align=align,max_lines=2,
+                                  family=spec.get(key+'_font','Georgia'),bold=(key=='title'))
+        sheet.paste(tile,(x0,y0))
+    finally:
+        tile.close()
 
 
 def draw_page_number(sheet: Image.Image, number: int | None, *,

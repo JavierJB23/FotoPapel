@@ -1,7 +1,7 @@
-REVELO v1.7 — MAQUETACIÓN AVANZADA
+REVELO v1.7.1 — REFINADO DE PIES DE FOTO Y LIBRO
 ================================
 
-ESTADO: CANDIDATA A STABLE. Conservar Revelo v1.6.2 STABLE/FROZEN aparte.
+ESTADO: CANDIDATA A STABLE. Mantener Revelo v1.6.2 STABLE/FROZEN intacto.
 
 NUEVAS FUNCIONES
 
@@ -22,6 +22,9 @@ NUEVAS FUNCIONES
 3. VISTA DE LIBRO ABIERTO
    En «Previsualización» pulsa «Libro abierto». La primera página aparece
    sola a la derecha; después se muestran pares izquierda/derecha.
+   La portada queda AISLADA a la derecha, con el lado izquierdo libre,
+   sin dibujar una falsa página. Los pares siguientes se presentan con
+   cantos de papel, sombra y lomo central para dar sensación de libro.
    «Página única» recupera la vista anterior. No modifica el PDF ni imprime
    hojas dobles: es una simulación para revisar un álbum encuadernado.
 
@@ -35,11 +38,19 @@ NUEVAS FUNCIONES
    tres fotografías por hoja. Los diseños de 1, 2, 4, 6 y 9 fotos siguen
    funcionando exactamente como antes.
 
-5. TEXTOS Y PIES DE FOTO
-   Cada foto tiene un botón «Texto / pie de foto». Añade un título, una
-   descripción/lugar/fecha y elige «Debajo» o «Sobre foto».
-   Los textos se añaden solo a la impresión, nunca a las imágenes fuente.
-   Puedes borrarlos vaciando ambos campos.
+5. TEXTOS Y PIES DE FOTO — REFINADOS EN v1.7.1
+   En «Texto / pie de foto», puedes añadir título y descripción/lugar/fecha,
+   elegir «Debajo», «Sobre foto» o «Personalizado» y seleccionar entre
+   las diez tipografías de Revelo, color, tamaño en puntos y alineación.
+   El texto ya NO genera recuadros opacos ni bandas beige/negras.
+   Al escoger «Personalizado» se abre un editor visual: selecciona título
+   o descripción y arrastra el texto libremente sobre la imagen. Aparecen
+   guías aguamarina cuando alcanzas el centro. «Aplicar posición» guarda
+   las coordenadas en el formulario y «Guardar texto» confirma todo.
+   Los textos se pintan en la composición PDF/Word, nunca en el original.
+   También funcionan en composiciones asimétricas de varias fotografías;
+   Revelo evita que el texto se dibuje sobre celdas vecinas.
+   Para quitar el pie, vacía los dos campos y guarda.
 
 COMPATIBILIDAD
 
@@ -55,9 +66,11 @@ INSTALACIÓN EN WINDOWS (GRATIS)
 
 1. Conserva tu copia de Revelo v1.6.2 STABLE/FROZEN sin reemplazar.
 2. En github.com/JavierJB23/FotoPapel pulsa Add file > Upload files.
-3. Sube los archivos de Revelo_v1_7_ACTUALIZACION.zip descomprimidos.
+3. Sube los archivos de Revelo_v1_7_1_ACTUALIZACION.zip descomprimidos.
    advanced_layout.py debe quedar junto a main.py.
-   test_v17_advanced.py debe quedar dentro de la carpeta tests/.
+   book_renderer.py y caption_editor.py son módulos nuevos y van al lado
+   de main.py; advanced_layout.py y main.py sustituyen sus versiones.
+   test_v171_refinements.py debe quedar en la carpeta tests/.
 4. Pulsa Commit changes. Abre la pestaña Actions.
 5. Descarga Revelo-Windows-CARPETA si el workflow acaba en verde.
 6. Descomprime el ZIP, conserva toda la carpeta y abre Revelo.exe.
@@ -71,8 +84,11 @@ PRUEBAS SUGERIDAS ANTES DE DECLARAR STABLE
 
 - Arrastra al panel seis fotos y un PDF desde el Explorador.
 - Elige «Grande arriba + 2 abajo» y revisa las dos hojas resultantes.
-- Añade pies a dos fotos y activa «Numeración» omitiendo una portada.
-- Abre «Libro abierto», avanza y vuelve a «Página única».
+- Añade pies a dos fotos: uno debajo y otro personalizado sobre la imagen.
+- Cambia tipografía, tamaño y color y comprueba que no aparecen fondos
+  rectangulares detrás del texto. Activa «Numeración» omitiendo la portada.
+- Abre «Libro abierto»: verifica que la portada aparece sola a la derecha,
+  sin hoja artificial a la izquierda, y después avanza para ver el lomo.
 - Exporta PDF y Word y revisa la maquetación.
 - Guarda un proyecto .revelo, ciérralo y vuelve a abrirlo: deben regresar
   el diseño elegido, el orden, las leyendas y los ajustes de numeración.
