@@ -31,7 +31,7 @@ jobs:
       - name: Compilar Revelo.exe
         shell: pwsh
         run: |
-          python -m PyInstaller --noconfirm --clean --onefile --windowed --name Revelo --icon icono.ico --add-data "icono.ico;." --add-data "logo_cabecera.png;." --collect-submodules PIL --collect-submodules reportlab --collect-all pypdfium2 --collect-all pillow_heif --collect-all qrcode main.py
+          python -m PyInstaller --noconfirm --clean --onefile --windowed --name Revelo --icon icono.ico --add-data "icono.ico;." --add-data "logo_cabecera.png;." --collect-submodules PIL --collect-submodules reportlab --collect-all pypdfium2 --collect-all pillow_heif --collect-all qrcode --collect-all pypdf --collect-all tkinterdnd2 main.py
       - name: Publicar EXE descargable
         uses: actions/upload-artifact@v4
         with:
