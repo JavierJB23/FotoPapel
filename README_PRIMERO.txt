@@ -1,3 +1,42 @@
+REVELO v1.7.5 FIX03 — SINCRONIZACIÓN DE FONDO Y ESCALA
+======================================================================
+
+Esta actualización se instala SOBRE la v1.7.5 FIX02. La versión 1.6.2
+STABLE/FROZEN permanece intacta. La v1.7.5 FIX03 es candidata a STABLE.
+
+CAMBIOS
+- El tamaño de foto (por ejemplo 0,70) se representa en las miniaturas
+  de la biblioteca y del orden, además de la previsualización y exportación.
+- Un único valor de escala de impresión conecta «Editar foto»,
+  «Texto / pie de foto» y «Diseño libre» (guardar aplica el valor).
+- En diseño libre, las esquinas cambian esa escala proporcional;
+  las asas laterales conservan la posibilidad de estirar ancho y alto
+  independientes, como una transformación adicional del diseño.
+- El fondo elegido en la cabecera coincide con el de «Diseño libre».
+  Cambiarlo desde el editor y guardar actualiza la cabecera.
+- «Fondo del papel» ofrece Blanco, Crema, Aguamarina, Azul noche,
+  Difuminado y Personalizado con «Ajustar (sin recortar)».
+- Con otros modos de encaje, el fondo queda visiblemente deshabilitado,
+  con una explicación en la línea inferior; no se aplica a escondidas.
+- Los fondos antiguos específicos de diseños libres se siguen pudiendo
+  abrir; al editarlos se convierten al nuevo fondo compartido.
+
+INSTALACIÓN EN GITHUB
+1. Descomprime Revelo_v1_7_5_FIX03_ACTUALIZACION.zip.
+2. Sube main.py, layout_editor.py, caption_editor.py, processor.py,
+   thumbnail_preview.py, README_PRIMERO.txt y el test dentro de tests/.
+3. Confirma los cambios (Commit changes) y entra en Actions.
+4. Descarga Revelo-Windows-CARPETA después de la compilación en verde.
+5. Extrae toda la carpeta: Revelo.exe necesita los demás componentes.
+No modificar el workflow ni las dependencias.
+
+PRUEBAS DE LA ACTUALIZACIÓN
+172 correctas y 2 omitidas en el entorno Linux con pantalla virtual.
+Pendiente de validar en el ejecutable de Windows de GitHub.
+
+NOTAS DE VERSIONES ANTERIORES
+======================================================================
+
 REVELO v1.7.5 FIX01 — CABECERA DE AJUSTES COMPACTA
 ======================================================================
 

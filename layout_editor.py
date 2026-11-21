@@ -133,7 +133,8 @@ def free_sheet_background(paths, opts, size, background='Según encaje', custom=
     """El mismo fondo en editor, previsualización, PDF y Word."""
     from processor import _extended_background, _prepared_photo
     if background == 'Difuminado' or (background == 'Según encaje' and
-                                       opts.fit == 'Ampliar fondo (sin recortar)'):
+                                       (opts.fit == 'Ampliar fondo (sin recortar)' or
+                                        (opts.fit == 'Ajustar (sin recortar)' and opts.paper_background == 'Difuminado'))):
         opened=None
         if first_source is None:
             opened,_=_prepared_photo(paths[0],opts)
@@ -156,7 +157,7 @@ def _btn(parent,label,callback,accent=False):
 
 
 def edit_sheet(parent,paths:list[Path],template:str,initial:dict[Path,dict],
-               opts,on_save, *, page_index:int=0):
+               opts,on_save, *, page_index:int=0, on_shared_save=None):
     """Editor independiente de hoja; clic para seleccionar, arrastre y rueda.
 
     Las plantillas irregulares ajustan sus dos divisiones; el diseño libre usa
@@ -174,9 +175,18 @@ def edit_sheet(parent,paths:list[Path],template:str,initial:dict[Path,dict],
         for i,p in enumerate(paths):
             if 'rect' not in state[p]:state[p]={**state[p],**free_default(i,len(paths))}
             state[p].setdefault('z',i)
+    # La cabecera es la fuente común de fondos; el editor libre no conserva
+    # una segunda paleta independiente. Los fondos antiguos se mantienen
+    # hasta que el usuario elige una nueva configuración.
     bg_spec=state[paths[0]]
-    background=tk.StringVar(value=bg_spec.get('background','Según encaje'))
-    custom_color=[bg_spec.get('background_color','#FFFFFF')]
+    background=tk.StringVar(value=(opts.paper_background if opts.fit == 'Ajustar (sin recortar)'
+                                     else 'Según encaje'))
+    custom_color=[opts.paper_background_color]
+    # Un tamaño proporcional: idéntico a «Escala de impresión» de Editar foto.
+    # Absorbemos el multiplicador legado del pie de foto al volver a guardar.
+    photo_scales={p:max(.25,min(1.5,
+        float(opts.photo_edits.get(p,{}).get('print_scale',1.0))*
+        float(opts.captions.get(p,{}).get('photo_scale',1.0)))) for p in paths}
     ratios={key:float(state[paths[0]].get(key,.4 if key=='split_main' and template=='2 arriba + grande abajo' else .6 if key=='split_main' else .5))
             for key in ('split_main','split_small')}
     dialog=tk.Toplevel(parent)
@@ -194,14 +204,14 @@ def edit_sheet(parent,paths:list[Path],template:str,initial:dict[Path,dict],
     selected=tk.IntVar(value=0)
     selected_label=tk.StringVar(value='Foto 1')
     tk.Label(toolbar,textvariable=selected_label,fg=AQUA,bg=PANEL,font=('Segoe UI',11,'bold')).pack(side='left',padx=(0,18))
-    size=tk.DoubleVar(value=100 if is_free else round(ratios['split_main']*100))
+    size=tk.DoubleVar(value=round(photo_scales[paths[0]]*100) if is_free else round(ratios['split_main']*100))
     tk.Label(toolbar,text='Tamaño',fg='white',bg=PANEL).pack(side='left')
-    size_slider=tk.Scale(toolbar,from_=35 if is_free else 20,to=160 if is_free else 80,resolution=1,
+    size_slider=tk.Scale(toolbar,from_=25 if is_free else 20,to=150 if is_free else 80,resolution=1,
                          orient='horizontal',showvalue=True,variable=size,length=240,
                          bg=PANEL,fg=CREAM,activebackground=AQUA,highlightthickness=0,
                          troughcolor='#2F455D')
     size_slider.pack(side='left',padx=8)
-    size_input=tk.Spinbox(toolbar,from_=35 if is_free else 20,to=160 if is_free else 80,
+    size_input=tk.Spinbox(toolbar,from_=25 if is_free else 20,to=150 if is_free else 80,
                           increment=1,textvariable=size,width=5,bg=PANEL,fg=AQUA,
                           insertbackground='white',relief='flat',justify='center')
     size_input.pack(side='left',padx=(0,5))
@@ -268,8 +278,9 @@ def edit_sheet(parent,paths:list[Path],template:str,initial:dict[Path,dict],
         bg_row.pack(fill='x',padx=18,pady=(7,0))
         tk.Label(bg_row,text='Fondo de la hoja',bg=PANEL,fg='white',
                  font=('Segoe UI',10,'bold')).pack(side='left',padx=(0,10))
-        bg_combo=ttk.Combobox(bg_row,textvariable=background,state='readonly',width=22,
-            values=('Según encaje','Blanco','Crema','Aguamarina','Azul noche','Difuminado','Personalizado'))
+        bg_combo=ttk.Combobox(bg_row,textvariable=background,
+            state='readonly' if opts.fit=='Ajustar (sin recortar)' else 'disabled',width=22,
+            values=('Blanco','Crema','Aguamarina','Azul noche','Difuminado','Personalizado'))
         bg_combo.pack(side='left')
         color_btn=_btn(bg_row,'Elegir color…',lambda:None)
         color_btn.pack(side='left',padx=9)
@@ -284,7 +295,10 @@ def edit_sheet(parent,paths:list[Path],template:str,initial:dict[Path,dict],
             color_btn.configure(state='normal' if background.get()=='Personalizado' else 'disabled')
             draw()
         bg_combo.bind('<<ComboboxSelected>>',change_bg)
-        color_btn.configure(state='normal' if background.get()=='Personalizado' else 'disabled')
+        color_btn.configure(state='normal' if opts.fit=='Ajustar (sin recortar)' and background.get()=='Personalizado' else 'disabled')
+        if opts.fit!='Ajustar (sin recortar)':
+            tk.Label(bg_row,text='Solo disponible con Ajustar (sin recortar)',
+                     bg=PANEL,fg=CREAM,font=('Segoe UI',9)).pack(side='left',padx=8)
     canvas=tk.Canvas(dialog,bg='#1B2F47',highlightthickness=0)
     canvas.pack(fill='both',expand=True,padx=18,pady=(12,6))
     info=tk.StringVar(value='Cada foto conservará su proporción y el orden del documento.')
@@ -334,9 +348,10 @@ def edit_sheet(parent,paths:list[Path],template:str,initial:dict[Path,dict],
         rect=unrotated_geometry[index]
         if rect is None:return
         x0,y0,x1,y1=safe_frame;aw=max(1,x1-x0);ah=max(1,y1-y0)
+        current_scale=max(.25,photo_scales[paths[index]])
         spec['rect']=[spec['rect'][0],spec['rect'][1],
-                     max(.05,min(1.5,(rect[2]-rect[0])/aw)),
-                     max(.05,min(1.5,(rect[3]-rect[1])/ah))]
+                     max(.05,min(1.5,(rect[2]-rect[0])/aw/current_scale)),
+                     max(.05,min(1.5,(rect[3]-rect[1])/ah/current_scale))]
         spec['stretch']=True
 
     def draw():
@@ -379,7 +394,7 @@ def edit_sheet(parent,paths:list[Path],template:str,initial:dict[Path,dict],
             if is_free:
                 bounds=state[paths[i]]['rect'];deg=state[paths[i]].get('angle',0.0)
                 cap=opts.captions.get(paths[i],{})
-                scale=float(cap.get('photo_scale',1.0))*float(opts.photo_edits.get(paths[i],{}).get('print_scale',1.0))
+                scale=photo_scales[paths[i]]
                 scaled_bounds=[bounds[0],bounds[1],bounds[2]*scale,bounds[3]*scale]
                 unrotated,rect=visible_photo_geometry(zone,scaled_bounds,img.size,deg,
                                                        stretch=bool(state[paths[i]].get('stretch',False)))
@@ -423,7 +438,7 @@ def edit_sheet(parent,paths:list[Path],template:str,initial:dict[Path,dict],
         selected_label.set(f'Foto {i+1} de {len(paths)} · {paths[i].name[:25]}')
         if is_free:
             spec=state[paths[i]]
-            size.set(round(100*spec['rect'][2]/free_default(i,len(paths))['rect'][2]))
+            size.set(round(100*photo_scales[paths[i]]))
             angle.set(spec.get('angle',0))
             angle_text.set(f"{spec.get('angle', 0):g}")
         else:
@@ -446,13 +461,9 @@ def edit_sheet(parent,paths:list[Path],template:str,initial:dict[Path,dict],
             frozen[0]=True;size.set(neutral);frozen[0]=False
             val=float(neutral)
         if is_free:
-            _make_stretch(i)
-            spec=state[paths[i]]
-            initial_spec=free_default(i,len(paths))['rect']
-            old=spec['rect'];new_w=max(.05,min(1.5,initial_spec[2]*val/100))
-            aspect=old[3]/max(.01,old[2])
-            new_h=max(.05,min(1.5,new_w*aspect))
-            spec['rect']=[old[0],old[1],round(new_w,5),round(new_h,5)]
+            # No modificar otra geometría aquí: este único valor es el que
+            # también leerá «Editar foto» y guardará photo_edits.print_scale.
+            photo_scales[paths[i]]=max(.25,min(1.5,val/100))
         else:
             if template == '2 arriba + grande abajo':
                 axis,inverse=('split_small',False) if i==0 else (('split_small',True) if i==1 else ('split_main',True))
@@ -506,7 +517,7 @@ def edit_sheet(parent,paths:list[Path],template:str,initial:dict[Path,dict],
             r=geometry[found]
             mode='template_resize' if abs(event.x-r[2])<20 and abs(event.y-r[3])<20 else 'select'
         drag.update(start=(event.x,event.y),initial=list(state[paths[found]].get('rect',[])),
-                    initial_size=float(size.get()),mode=mode)
+                    initial_size=float(size.get()),initial_scale=photo_scales.get(paths[found],1.0),mode=mode)
         draw()
 
     def moving(event):
@@ -538,10 +549,14 @@ def edit_sheet(parent,paths:list[Path],template:str,initial:dict[Path,dict],
             if len(handle)==2:
                 delta_x=(dx if 'e' in handle else -dx)*2
                 delta_y=(dy if 's' in handle else -dy)*2
-                factor=1+max(delta_x/max(.05,rw),delta_y/max(.05,rh),
-                             min(delta_x/max(.05,rw),delta_y/max(.05,rh)))
-                factor=max(.15,min(1.5/max(rw,rh),factor))
-                rw=max(.05,min(1.5,rw*factor));rh=max(.05,min(1.5,rh*factor))
+                base=drag['initial_scale']
+                factor=1+max(delta_x/max(.05,rw*base),delta_y/max(.05,rh*base),
+                             min(delta_x/max(.05,rw*base),delta_y/max(.05,rh*base)))
+                # El mismo zoom proporcional se representa en ambos editores.
+                photo_scales[paths[index]]=round(max(.25,min(1.5,base*factor)),4)
+                frozen[0]=True
+                size.set(round(photo_scales[paths[index]]*100))
+                frozen[0]=False
             else:
                 if handle in ('e','w'):
                     rw=max(.05,min(1.5,rw+(dx if handle=='e' else -dx)*2))
@@ -573,14 +588,19 @@ def edit_sheet(parent,paths:list[Path],template:str,initial:dict[Path,dict],
         sync_controls();draw()
         info.set(f'Foto {found+1} colocada delante. Doble clic sobre otra para cambiar las capas.')
 
-    def release(_event):drag['start']=None
+    def release(_event):
+        drag['start']=None
+        if is_free:
+            sync_controls()
     def wheel(event):
         # La rueda nunca cambia ajustes por accidente. Para dimensionar, asas o barra.
         return 'break'
 
     def reset():
         if is_free:
-            for i,p in enumerate(paths):state[p]=free_default(i,len(paths))
+            for i,p in enumerate(paths):
+                state[p]=free_default(i,len(paths))
+                photo_scales[p]=1.0
         else:
             ratios.update(split_main=.4 if template=='2 arriba + grande abajo' else .6,split_small=.5)
         sync_controls();draw()
@@ -591,8 +611,17 @@ def edit_sheet(parent,paths:list[Path],template:str,initial:dict[Path,dict],
         if save:
             if is_free:
                 out={p:validate_layout_item(spec) for p,spec in state.items()}
-                out[paths[0]]['background']=background.get()
-                out[paths[0]]['background_color']=custom_color[0]
+                # La paleta pertenece al papel general, no a cada fotografía.
+                for spec in out.values():
+                    spec.pop('background',None)
+                    spec.pop('background_color',None)
+                if on_shared_save is not None:
+                    on_shared_save(dict(photo_scales),
+                                   (background.get(),custom_color[0]))
+                else:
+                    # Compatibilidad con consumidores antiguos del editor.
+                    out[paths[0]]['background']=background.get()
+                    out[paths[0]]['background_color']=custom_color[0]
             else:
                 out={paths[0]:{**validate_layout_item(state.get(paths[0])), **ratios}}
                 # Limpiar solo las antiguas divisiones de este grupo.

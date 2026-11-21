@@ -98,7 +98,7 @@ class ExportOptions:
             raise ValueError("Orientación no reconocida")
         if self.fit not in FIT_MODES:
             raise ValueError("Modo de encaje no reconocido")
-        if self.paper_background not in (*PAPER_BACKGROUND_PRESETS, "Personalizado"):
+        if self.paper_background not in (*PAPER_BACKGROUND_PRESETS, "Difuminado", "Personalizado"):
             raise ValueError("Color de fondo de papel desconocido")
         import re
         if not isinstance(self.paper_background_color, str) or not re.fullmatch(r"#[a-fA-F0-9]{6}", self.paper_background_color):
@@ -479,9 +479,14 @@ def render_print_image(
                     _paste_clipped_to_box(paper,photo,(x,y),box)
                 finally:photo.close()
             else:
-                paper=Image.new('RGB',(out_w,out_h), paper_background_color(opts) if opts.fit=='Ajustar (sin recortar)' else 'white')
-                tile=_render_inside(working,use_size,opts.fit,
-                                    background=paper_background_color(opts))
+                blurred=(opts.fit == 'Ajustar (sin recortar)' and
+                         opts.paper_background == 'Difuminado')
+                paper=(_extended_background(working,(out_w,out_h)) if blurred else
+                       Image.new('RGB',(out_w,out_h), paper_background_color(opts)
+                                 if opts.fit=='Ajustar (sin recortar)' else 'white'))
+                tile=(ImageOps.contain(working,use_size,Image.Resampling.LANCZOS)
+                      if blurred else _render_inside(working,use_size,opts.fit,
+                                    background=paper_background_color(opts)))
                 try:
                     x=round((box[0]+box[2]-tile.width)/2)
                     y=round((box[1]+box[3]-tile.height)/2)
@@ -489,6 +494,15 @@ def render_print_image(
                 finally:tile.close()
             return paper,(w_mm,h_mm),low_resolution
 
+        if opts.fit == 'Ajustar (sin recortar)' and opts.paper_background == 'Difuminado':
+            paper = _extended_background(working,(out_w,out_h))
+            inside = ImageOps.contain(working,(box[2]-box[0],box[3]-box[1]),Image.Resampling.LANCZOS)
+            try:
+                x=box[0]+(box[2]-box[0]-inside.width)//2
+                y=box[1]+(box[3]-box[1]-inside.height)//2
+                paper.paste(inside,(x,y))
+            finally:inside.close()
+            return paper,(w_mm,h_mm),low_resolution
         result_inner = _render_inside(working, (box[2] - box[0], box[3] - box[1]), opts.fit,
                                       background=paper_background_color(opts))
         if not opts.binding:
@@ -658,8 +672,11 @@ def _render_free_sheet(paths: Sequence[Path],opts: ExportOptions,
     w_mm,h_mm=physical
     from layout_editor import free_sheet_background, visible_photo_geometry
     sheet_spec=validate_layout_item(opts.layout_items.get(paths[0]))
-    sheet=free_sheet_background(paths,opts,size,
-                sheet_spec.get('background','Según encaje'),
+    # Los modos que no son «Ajustar» no admiten color de fondo general:
+    # tampoco debe quedar activado un fondo antiguo oculto en diseño libre.
+    bg_mode=(sheet_spec.get('background','Según encaje')
+             if opts.fit=='Ajustar (sin recortar)' else 'Según encaje')
+    sheet=free_sheet_background(paths,opts,size,bg_mode,
                 sheet_spec.get('background_color','#FFFFFF'))
     x0,y0,x1,y1=safe
     zone_w=max(1,x1-x0);zone_h=max(1,y1-y0)
@@ -780,7 +797,8 @@ def render_layout_page(
                                      template='Cuadrícula', count=opts.photos_per_page,
                                      landscape=w_mm > h_mm)
     cols, rows = _grid_shape(opts.photos_per_page, w_mm > h_mm)
-    if opts.fit == "Ampliar fondo (sin recortar)":
+    if opts.fit == "Ampliar fondo (sin recortar)" or (opts.fit == "Ajustar (sin recortar)" and
+                                                      opts.paper_background == "Difuminado"):
         if template != "Cuadrícula":
             first, _ = _prepared_photo(paths[0], opts)
             try:
@@ -846,10 +864,12 @@ def render_layout_page(
                     photo.close()
             else:
                 tile_w=max(8,round(cw*photo_scale));tile_h=max(8,round(photo_ch*photo_scale))
-                tile = _render_inside(content, (tile_w, tile_h), opts.fit,
-                                      background=paper_background_color(opts))
+                blurred=(opts.fit=='Ajustar (sin recortar)' and opts.paper_background=='Difuminado')
+                tile=(ImageOps.contain(content,(tile_w,tile_h),Image.Resampling.LANCZOS) if blurred else
+                      _render_inside(content, (tile_w, tile_h), opts.fit,
+                                     background=paper_background_color(opts)))
                 try:
-                    _paste_clipped_to_box(sheet,tile,(cx0+(cw-tile_w)//2,cy0+(photo_ch-tile_h)//2),
+                    _paste_clipped_to_box(sheet,tile,(cx0+(cw-tile.width)//2,cy0+(photo_ch-tile.height)//2),
                                            (cx0,cy0,cx1,photo_bottom))
                 finally:
                     tile.close()

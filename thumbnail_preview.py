@@ -56,6 +56,33 @@ def render_photo_thumbnail(path: Path, opts: ExportOptions, *,
                 paper.paste(whole,((out_w-whole.width)//2,(out_h-whole.height)//2))
                 whole.close()
                 return paper
+            print_scale=float(opts.photo_edits.get(path,{}).get('print_scale',1.0))
+            if abs(print_scale-1)>0.002:
+                use_size=(max(8,round((box[2]-box[0])*print_scale)),
+                          max(8,round((box[3]-box[1])*print_scale)))
+                blurred=(opts.fit=='Ajustar (sin recortar)' and opts.paper_background=='Difuminado')
+                paper=(_extended_background(edited,(out_w,out_h)) if blurred or
+                       opts.fit=='Ampliar fondo (sin recortar)' else
+                       Image.new('RGB',(out_w,out_h),paper_background_color(opts)
+                                 if opts.fit=='Ajustar (sin recortar)' else 'white'))
+                tile=(ImageOps.contain(edited,use_size,Image.Resampling.LANCZOS) if blurred or
+                      opts.fit=='Ampliar fondo (sin recortar)' else
+                      _render_inside(edited,use_size,opts.fit,background=paper_background_color(opts)))
+                try:
+                    from processor import _paste_clipped_to_box
+                    x=(box[0]+box[2]-tile.width)//2
+                    y=(box[1]+box[3]-tile.height)//2
+                    _paste_clipped_to_box(paper,tile,(x,y),box)
+                finally:tile.close()
+                return paper
+            if opts.fit=='Ajustar (sin recortar)' and opts.paper_background=='Difuminado':
+                paper=_extended_background(edited,(out_w,out_h))
+                photo=ImageOps.contain(edited,(box[2]-box[0],box[3]-box[1]),Image.Resampling.LANCZOS)
+                try:
+                    paper.paste(photo,(box[0]+(box[2]-box[0]-photo.width)//2,
+                                       box[1]+(box[3]-box[1]-photo.height)//2))
+                finally:photo.close()
+                return paper
             if opts.fit == 'Ampliar fondo (sin recortar)' and opts.binding:
                 paper = _extended_background(edited, (out_w,out_h))
                 safe_w, safe_h = box[2]-box[0],box[3]-box[1]

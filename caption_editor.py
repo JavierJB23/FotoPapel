@@ -147,7 +147,8 @@ def _edit_positions(parent: tk.Toplevel, path: Path, spec: dict, opts: ExportOpt
 
 
 def edit_caption(parent, path: Path, initial: dict | None,
-                 opts: ExportOptions, on_save, *, page_paths=None, page_index=0):
+                 opts: ExportOptions, on_save, *, page_paths=None, page_index=0,
+                 on_master_scale=None):
     spec=validate_caption(initial)
     dialog=tk.Toplevel(parent)
     dialog.title('Revelo · Texto y pie de foto')
@@ -162,7 +163,10 @@ def edit_caption(parent, path: Path, initial: dict | None,
     alignment=tk.StringVar(value=spec.get('align','Centro'))
     title_font=tk.StringVar(value=spec.get('title_font','Georgia'))
     detail_font=tk.StringVar(value=spec.get('detail_font','Georgia'))
-    photo_scale=tk.DoubleVar(value=round(float(spec.get('photo_scale',1.0))*100))
+    unified=on_master_scale is not None
+    inherited_scale=float(opts.photo_edits.get(path,{}).get('print_scale',1.0))
+    legacy_scale=float(spec.get('photo_scale',1.0))
+    photo_scale=tk.DoubleVar(value=round((inherited_scale*legacy_scale if unified else legacy_scale)*100))
     title_size=tk.StringVar(value=str(spec.get('title_size',14)))
     detail_size=tk.StringVar(value=str(spec.get('detail_size',10)))
     title_color=[spec.get('title_color','#FFFFFF' if placement.get()!='Debajo' else '#253447')]
@@ -237,11 +241,11 @@ def edit_caption(parent, path: Path, initial: dict | None,
              justify='left',anchor='w').pack(fill='x')
     scale_row=tk.Frame(body,bg=SURFACE)
     scale_row.pack(fill='x')
-    photo_scale_slider=tk.Scale(scale_row,from_=25,to=100,resolution=1,variable=photo_scale,orient='horizontal',
+    photo_scale_slider=tk.Scale(scale_row,from_=25,to=150 if unified else 100,resolution=1,variable=photo_scale,orient='horizontal',
              showvalue=False,bg=SURFACE,fg=TEXT,highlightthickness=0,
              troughcolor=SURFACE_2,activebackground=ACCENT)
     photo_scale_slider.pack(side='left',fill='x',expand=True)
-    scale_spin=tk.Spinbox(scale_row,from_=25,to=100,textvariable=photo_scale,
+    scale_spin=tk.Spinbox(scale_row,from_=25,to=150 if unified else 100,textvariable=photo_scale,
                          width=5,bg=SURFACE_2,fg=ACCENT,insertbackground=ACCENT,
                          relief='flat',justify='center',font=('Segoe UI',10,'bold'))
     scale_spin.pack(side='left',padx=(6,0))
@@ -295,7 +299,8 @@ def edit_caption(parent, path: Path, initial: dict | None,
                   'title_font':title_font.get(),'detail_font':detail_font.get(),
                   'title_size':int(title_size.get()),'detail_size':int(detail_size.get()),
                   'title_color':title_color[0],'detail_color':detail_color[0],
-                  'align':alignment.get(),'photo_scale':round(float(photo_scale.get())/100,4),**positions}
+                  'align':alignment.get(),
+                  'photo_scale':1.0 if unified else round(float(photo_scale.get())/100,4),**positions}
             return validate_caption(data)
         except (ValueError,TypeError) as exc:
             messages.showwarning('Texto y pie de foto',f'Revisa el tamaño, posición o color: {exc}',parent=dialog)
@@ -335,7 +340,7 @@ def edit_caption(parent, path: Path, initial: dict | None,
                 'detail_font':detail_font.get(),'title_size':int(title_size.get()),
                 'detail_size':int(detail_size.get()),'title_color':title_color[0],
                 'detail_color':detail_color[0],'align':alignment.get(),
-                'photo_scale':round(photo_scale.get()/100,4),**positions}
+                'photo_scale':1.0 if unified else round(photo_scale.get()/100,4),**positions}
             return validate_caption(data)
         except (ValueError,TypeError,tk.TclError):
             return None
@@ -351,7 +356,13 @@ def edit_caption(parent, path: Path, initial: dict | None,
         group=tuple(page_paths or (path,))
         caps=dict(opts.captions)
         caps[path]=spec_now
-        new_opts=replace(opts,captions=caps)
+        edits=dict(opts.photo_edits)
+        if unified:
+            from photo_edits import validate_edits
+            edited=validate_edits(edits.get(path))
+            edited['print_scale']=round(float(photo_scale.get())/100,4)
+            edits[path]=edited
+        new_opts=replace(opts,captions=caps,photo_edits=edits)
         try:
             img,(wmm,hmm),_=render_layout_page(group,new_opts,
                 preview_max_size=(min(850,max(100,pw-24)),min(780,max(100,ph-24))),
@@ -432,7 +443,7 @@ def edit_caption(parent, path: Path, initial: dict | None,
         xx,yy,starting=dragging[0]
         delta=max(event.x-xx,event.y-yy)
         width=max(100,preview_box[2])
-        photo_scale.set(round(max(25,min(100,starting+delta*100/width))))
+        photo_scale.set(round(max(25,min(150 if unified else 100,starting+delta*100/width))))
 
     def photo_release(_event):dragging[0]=None
     preview_canvas.bind('<ButtonPress-1>',photo_press)
@@ -464,6 +475,8 @@ def edit_caption(parent, path: Path, initial: dict | None,
             clean=collect()
             if clean is None:
                 return
+            if unified:
+                on_master_scale(round(float(photo_scale.get())/100,4))
             on_save(clean)
         if updating[0] is not None:
             dialog.after_cancel(updating[0]);updating[0]=None
