@@ -141,7 +141,11 @@ def free_sheet_background(paths, opts, size, background='Según encaje', custom=
             return _extended_background(first_source if first_source is not None else opened,size)
         finally:
             if opened is not None:opened.close()
-    color = custom if background=='Personalizado' else LAYOUT_BACKGROUNDS.get(background,'#FFFFFF')
+    from processor import paper_background_color
+    if background == 'Según encaje' and opts.fit == 'Ajustar (sin recortar)':
+        color = paper_background_color(opts)
+    else:
+        color = custom if background=='Personalizado' else LAYOUT_BACKGROUNDS.get(background,'#FFFFFF')
     return Image.new('RGB',size,color)
 
 
@@ -205,17 +209,51 @@ def edit_sheet(parent,paths:list[Path],template:str,initial:dict[Path,dict],
     size_input.bind('<FocusOut>',lambda _e:slider_changed())
     size_input.bind('<MouseWheel>',lambda _e:'break')
     angle=tk.DoubleVar(value=0)
+    angle_text=tk.StringVar(value='0')
     angle_label=tk.Label(toolbar,text='Giro °',fg='white',bg=PANEL)
     angle_label.pack(side='left',padx=(18,5))
-    angle_slider=tk.Scale(toolbar,from_=-180,to=180,orient='horizontal',resolution=1,
+    angle_slider=tk.Scale(toolbar,from_=-180,to=180,orient='horizontal',resolution=.1,
                           variable=angle,length=175,showvalue=True,
                           bg=PANEL,fg=CREAM,activebackground=AQUA,highlightthickness=0,
                           troughcolor='#2F455D')
     angle_slider.pack(side='left')
-    angle_entry=tk.Entry(toolbar,textvariable=angle,width=6,fg=AQUA,bg=PANEL,
+    angle_entry=tk.Entry(toolbar,textvariable=angle_text,width=6,fg=AQUA,bg=PANEL,
                          insertbackground='white',relief='flat',justify='center')
     angle_entry.pack(side='left',padx=(7,0))
-    angle_entry.bind('<Return>',lambda _ev:dialog.focus_set())
+    # Una entrada manual debe modificar también el modelo, no solo el texto
+    # del deslizador. La selección y el PDF leerán el mismo valor confirmado.
+    def commit_angle(_ev=None):
+        if not is_free:
+            return
+        try:
+            value = float(angle_text.get().replace(',', '.'))
+            if not (-180 <= value <= 180):
+                raise ValueError
+        except ValueError:
+            angle_text.set(f"{state[paths[selected.get()]].get('angle', 0):g}")
+            return
+        if abs(value) < 2.1:
+            value = 0.0
+        frozen[0] = True
+        angle.set(value)
+        frozen[0] = False
+        angle_changed()
+        if angle_text.get() != f'{value:g}':
+            angle_text.set(f'{value:g}')
+        if _ev is not None and _ev.keysym == 'Return':
+            dialog.focus_set()
+    # Teclear grados repinta sin tener que tocar la barra; se espera a que
+    # termine la pulsación para no interpretar '-','' o '3,' como un error.
+    angle_typing_job=[None]
+    def schedule_angle(*_):
+        if frozen[0] or not is_free:
+            return
+        if angle_typing_job[0] is not None:
+            dialog.after_cancel(angle_typing_job[0])
+        angle_typing_job[0]=dialog.after(180, commit_angle)
+    angle_text.trace_add('write', schedule_angle)
+    angle_entry.bind('<Return>', commit_angle)
+    angle_entry.bind('<FocusOut>', commit_angle)
     angle_entry.bind('<MouseWheel>',lambda _ev:'break')
     angle_slider.bind('<MouseWheel>',lambda _ev:'break')
     size_slider.bind('<MouseWheel>',lambda _ev:'break')
@@ -387,6 +425,7 @@ def edit_sheet(parent,paths:list[Path],template:str,initial:dict[Path,dict],
             spec=state[paths[i]]
             size.set(round(100*spec['rect'][2]/free_default(i,len(paths))['rect'][2]))
             angle.set(spec.get('angle',0))
+            angle_text.set(f"{spec.get('angle', 0):g}")
         else:
             if template == '2 arriba + grande abajo':
                 axis,inverse=('split_small',False) if i==0 else (('split_small',True) if i==1 else ('split_main',True))
@@ -424,9 +463,15 @@ def edit_sheet(parent,paths:list[Path],template:str,initial:dict[Path,dict],
 
     def angle_changed(_=None):
         if not frozen[0] and is_free:
-            deg=float(angle.get())
+            try:
+                deg=float(angle.get())
+            except (ValueError, tk.TclError):
+                return
             if abs(deg)<2.1:deg=0.;angle.set(0.)
             state[paths[selected.get()]]['angle']=deg
+            if dialog.focus_get() is not angle_entry:
+                if angle_text.get() != f'{deg:g}':
+                    angle_text.set(f'{deg:g}')
             draw()
 
     def hit_test(mx,my):
@@ -540,6 +585,9 @@ def edit_sheet(parent,paths:list[Path],template:str,initial:dict[Path,dict],
             ratios.update(split_main=.4 if template=='2 arriba + grande abajo' else .6,split_small=.5)
         sync_controls();draw()
     def finish(save):
+        if angle_typing_job[0] is not None:
+            dialog.after_cancel(angle_typing_job[0])
+            angle_typing_job[0] = None
         if save:
             if is_free:
                 out={p:validate_layout_item(spec) for p,spec in state.items()}

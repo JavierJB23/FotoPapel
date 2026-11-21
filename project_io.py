@@ -282,6 +282,8 @@ def load_project(source: Path, folder: Path, progress: Progress | None = None) -
                 ExportOptions(
                     paper=settings['paper'], orientation=settings['orientation'],
                     fit=settings['fit'], dpi=int(settings['dpi']),
+                    paper_background=settings.get('paper_background', 'Blanco'),
+                    paper_background_color=settings.get('paper_background_color', '#FFFFFF'),
                     fmt=settings['fmt'], binding=settings['binding'],
                     photos_per_page=int(settings['photos_per_page']),
                     layout_template=settings.get('layout_template', 'Cuadrícula'),

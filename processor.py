@@ -44,6 +44,18 @@ PAPER_SIZES: dict[str, tuple[float, float]] = {
 
 SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff", ".heic", ".heif"}
 Progress = Callable[[int, int, str], None]
+PAPER_BACKGROUND_PRESETS = {
+    "Blanco": "#FFFFFF", "Crema": "#F6EBDC",
+    "Aguamarina": "#DDF8EF", "Azul noche": "#0B1928",
+}
+
+
+def paper_background_color(opts):
+    """Color elegido para huecos al ajustar sin recortar."""
+    return (opts.paper_background_color if opts.paper_background == "Personalizado"
+            else PAPER_BACKGROUND_PRESETS.get(opts.paper_background, "#FFFFFF"))
+
+
 FIT_MODES = (
     "Ajustar (sin recortar)",
     "Rellenar (recortar)",
@@ -75,6 +87,9 @@ class ExportOptions:
     numbering_format: str = "1"
     # Geometrías opcionales de fotografías, por imagen; se conservan en .revelo.
     layout_items: dict[Path, dict] = field(default_factory=dict)
+    # Al final de la dataclass para no alterar argumentos posicionales antiguos.
+    paper_background: str = "Blanco"
+    paper_background_color: str = "#FFFFFF"
 
     def validate(self) -> None:
         if self.paper not in PAPER_SIZES:
@@ -83,6 +98,11 @@ class ExportOptions:
             raise ValueError("Orientación no reconocida")
         if self.fit not in FIT_MODES:
             raise ValueError("Modo de encaje no reconocido")
+        if self.paper_background not in (*PAPER_BACKGROUND_PRESETS, "Personalizado"):
+            raise ValueError("Color de fondo de papel desconocido")
+        import re
+        if not isinstance(self.paper_background_color, str) or not re.fullmatch(r"#[a-fA-F0-9]{6}", self.paper_background_color):
+            raise ValueError("Color de fondo personalizado incorrecto")
         if not (72 <= self.dpi <= 600):
             raise ValueError("Los PPP deben estar entre 72 y 600")
         if not isinstance(self.binding, bool):
@@ -346,7 +366,7 @@ def _prepared_photo(path: Path, opts: ExportOptions) -> tuple[Image.Image, bool]
     return prepared, trimmed
 
 
-def _render_inside(im: Image.Image, size: tuple[int, int], fit: str) -> Image.Image:
+def _render_inside(im: Image.Image, size: tuple[int, int], fit: str, *, background: str = "#FFFFFF") -> Image.Image:
     """Compone la foto en un rectángulo disponible, sin conocer el papel."""
     out_w, out_h = size
     if fit == "Rellenar (recortar)":
@@ -364,7 +384,7 @@ def _render_inside(im: Image.Image, size: tuple[int, int], fit: str) -> Image.Im
     elif fit == "Ampliar fondo (sin recortar)":
         result = _extended_background(im, (out_w, out_h))
     else:
-        result = Image.new("RGB", (out_w, out_h), "white")
+        result = Image.new("RGB", (out_w, out_h), background)
     result.paste(inside, ((out_w - inside.width) // 2, (out_h - inside.height) // 2))
     inside.close()
     return result
@@ -459,8 +479,9 @@ def render_print_image(
                     _paste_clipped_to_box(paper,photo,(x,y),box)
                 finally:photo.close()
             else:
-                paper=Image.new('RGB',(out_w,out_h),'white')
-                tile=_render_inside(working,use_size,opts.fit)
+                paper=Image.new('RGB',(out_w,out_h), paper_background_color(opts) if opts.fit=='Ajustar (sin recortar)' else 'white')
+                tile=_render_inside(working,use_size,opts.fit,
+                                    background=paper_background_color(opts))
                 try:
                     x=round((box[0]+box[2]-tile.width)/2)
                     y=round((box[1]+box[3]-tile.height)/2)
@@ -468,11 +489,12 @@ def render_print_image(
                 finally:tile.close()
             return paper,(w_mm,h_mm),low_resolution
 
-        result_inner = _render_inside(working, (box[2] - box[0], box[3] - box[1]), opts.fit)
+        result_inner = _render_inside(working, (box[2] - box[0], box[3] - box[1]), opts.fit,
+                                      background=paper_background_color(opts))
         if not opts.binding:
             return result_inner, (w_mm, h_mm), low_resolution
         try:
-            paper = Image.new("RGB", (out_w, out_h), "white")
+            paper = Image.new("RGB", (out_w, out_h), paper_background_color(opts) if opts.fit == 'Ajustar (sin recortar)' else 'white')
             paper.paste(result_inner, (box[0], box[1]))
         finally:
             result_inner.close()
@@ -769,7 +791,7 @@ def render_layout_page(
             sheet = _extended_layout_background(paths, opts, (out_w, out_h),
                                                 cell_rects, cols, rows)
     else:
-        sheet = Image.new("RGB", (out_w, out_h), "white")
+        sheet = Image.new("RGB", (out_w, out_h), paper_background_color(opts) if opts.fit == 'Ajustar (sin recortar)' else 'white')
     lowres_any = False
     for idx, path in enumerate(paths):
         cx0, cy0, cx1, cy1 = cell_rects[idx]
@@ -824,7 +846,8 @@ def render_layout_page(
                     photo.close()
             else:
                 tile_w=max(8,round(cw*photo_scale));tile_h=max(8,round(photo_ch*photo_scale))
-                tile = _render_inside(content, (tile_w, tile_h), opts.fit)
+                tile = _render_inside(content, (tile_w, tile_h), opts.fit,
+                                      background=paper_background_color(opts))
                 try:
                     _paste_clipped_to_box(sheet,tile,(cx0+(cw-tile_w)//2,cy0+(photo_ch-tile_h)//2),
                                            (cx0,cy0,cx1,photo_bottom))

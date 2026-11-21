@@ -10,7 +10,7 @@ import threading
 import tempfile
 import uuid
 import tkinter as tk
-from tkinter import ttk, filedialog
+from tkinter import ttk, filedialog, colorchooser
 from pathlib import Path
 
 import revelo_dialogs as messagebox
@@ -124,6 +124,7 @@ class ReveloApp:
         self.thumbnails: dict[Path, ImageTk.PhotoImage] = {}
         self.thumbnails_small: dict[Path, ImageTk.PhotoImage] = {}
         self._thumbnail_settings_job = None
+        self.sheet_thumbnails: dict[tuple, ImageTk.PhotoImage] = {}
         self.details: dict[Path, tuple[int, int]] = {}
         self.selected: Path | None = None  # selección de biblioteca
         self.order_selected: Path | None = None  # independiente, selección en lista ordenada
@@ -146,6 +147,8 @@ class ReveloApp:
         self.paper = tk.StringVar(value="A4")
         self.orientation = tk.StringVar(value="Automática")
         self.fit = tk.StringVar(value="Ajustar (sin recortar)")
+        self.paper_background = tk.StringVar(value="Blanco")
+        self.paper_background_color = tk.StringVar(value="#FFFFFF")
         self.dpi = tk.StringVar(value="300")
         self.output_format = tk.StringVar(value="PDF")
         self.binding = tk.StringVar(value="No")
@@ -172,7 +175,8 @@ class ReveloApp:
         self.per_sheet.trace_add("write", self._on_per_sheet_changed)
         self.layout_template.trace_add("write", self._on_template_changed)
         # Las tarjetas muestran siempre el papel y la orientación actuales.
-        for var in (self.paper, self.orientation, self.fit, self.binding):
+        for var in (self.paper, self.orientation, self.fit, self.binding,
+                    self.paper_background, self.paper_background_color):
             var.trace_add("write", self._on_thumbnail_settings_changed)
         self.root.after(120, self._poll)
 
@@ -263,6 +267,20 @@ class ReveloApp:
         self._label(info, "", size=10, color=MUTED, textvariable=self.overview).pack(side="left")
         self._label(info, "  ·  ", color=MUTED).pack(side="left")
         self._label(info, "", textvariable=self.layout_info, color=MUTED).pack(side="left")
+        background_panel = tk.Frame(info, bg=SURFACE)
+        background_panel.pack(side='right', padx=(15, 0))
+        self._label(background_panel, 'FONDO DEL PAPEL', color=MUTED,
+                    size=8, weight='bold').pack(side='left', padx=(0, 7))
+        self.paper_background_combo = ttk.Combobox(
+            background_panel, textvariable=self.paper_background,
+            values=('Blanco', 'Crema', 'Aguamarina', 'Azul noche', 'Personalizado'),
+            width=13, state='readonly', style='Custom.TCombobox')
+        self.paper_background_combo.pack(side='left')
+        self.paper_background_button = self._button(
+            background_panel, 'Color…', self.choose_paper_background_color, small=True)
+        self.fit.trace_add('write', lambda *_: self._update_paper_background_controls())
+        self.paper_background.trace_add('write', lambda *_: self._update_paper_background_controls())
+        self._update_paper_background_controls()
         for var in (self.paper, self.orientation, self.dpi, self.fit, self.output_format, self.binding, self.per_sheet):
             var.trace_add("write", self._update_overview)
 
@@ -365,6 +383,24 @@ class ReveloApp:
         self.order_area.pack(fill="both", expand=True, padx=9, pady=9)
         self._show_empty_order()
 
+    def _update_paper_background_controls(self):
+        if not hasattr(self, 'paper_background_combo'):
+            return
+        enabled = self.fit.get() == 'Ajustar (sin recortar)'
+        self.paper_background_combo.configure(state='readonly' if enabled else 'disabled')
+        custom = enabled and self.paper_background.get() == 'Personalizado'
+        if custom and not self.paper_background_button.winfo_manager():
+            self.paper_background_button.pack(side='left', padx=(7, 0))
+        if not custom and self.paper_background_button.winfo_manager():
+            self.paper_background_button.pack_forget()
+
+    def choose_paper_background_color(self):
+        chosen = colorchooser.askcolor(color=self.paper_background_color.get(),
+                                       parent=self.root, title='Revelo · Color del papel')[1]
+        if chosen:
+            self.paper_background_color.set(chosen.upper())
+            self.paper_background.set('Personalizado')
+
     def _field(self, row, caption, var, choices, *, column=0, compact=False, last=False):
         holder = tk.Frame(row, bg=SURFACE)
         holder.grid(row=0, column=column, sticky="ew", padx=(0, 0 if last else 9))
@@ -419,6 +455,7 @@ class ReveloApp:
             return
         self.thumbnails.clear()
         self.thumbnails_small.clear()
+        self.sheet_thumbnails.clear()
         self.render_library()
         self.render_order()
 
@@ -456,7 +493,7 @@ class ReveloApp:
                 clean=validate_layout_item(spec)
                 if clean:self.layout_items[path]=clean
                 else:self.layout_items.pop(path,None)
-            self.thumbnails.clear();self.thumbnails_small.clear()
+            self.thumbnails.clear();self.thumbnails_small.clear();self.sheet_thumbnails.clear()
             self.render_library();self.render_order()
             if self.preview_window is not None and self.preview_window.winfo_exists():self._show_preview_page()
             self.feedback.set(f'Composición guardada para {len(selected_group)} fotos de esta hoja.')
@@ -647,6 +684,32 @@ class ReveloApp:
                 picture.close()
                 background.close()
         return self.thumbnails[path]
+
+    def _sheet_thumbnail(self, group, sheet_index):
+        """Hoja ya compuesta para la lista de orden, no la foto fuente aislada."""
+        key = (tuple(group), sheet_index, self.paper.get(), self.orientation.get(),
+               self.fit.get(), self.paper_background.get(), self.paper_background_color.get(),
+               repr([self.layout_items.get(p, {}) for p in group]))
+        if key not in self.sheet_thumbnails:
+            if len(self.sheet_thumbnails) >= 128:
+                self.sheet_thumbnails.clear()
+            opts = self._options()
+            try:
+                sheet, _, _ = render_layout_page(group, opts,
+                          preview_max_size=(248, 184), page_index=sheet_index)
+                try:
+                    sheet.thumbnail((124, 92), Image.Resampling.LANCZOS)
+                    frame = Image.new('RGB', (124, 92), (29, 45, 67))
+                    try:
+                        frame.paste(sheet, ((124-sheet.width)//2, (92-sheet.height)//2))
+                        self.sheet_thumbnails[key] = ImageTk.PhotoImage(frame)
+                    finally:
+                        frame.close()
+                finally:
+                    sheet.close()
+            except (OSError, ValueError, RuntimeError):
+                return self.thumbnails_small[group[0]]
+        return self.sheet_thumbnails[key]
 
     def edit_photo_dialog(self, path: Path):
         """Editor separado por fotografía; no modifica archivos originales."""
@@ -1181,6 +1244,11 @@ class ReveloApp:
                     color=MUTED, size=11, justify="center").pack(pady=100)
 
     def render_order(self):
+        # Un cambio de plantilla puede llegar mientras se reconstruyen las
+        # tarjetas: no asumir que el thumbnail ya está precalculado.
+        for path in self.pages:
+            if path not in self.thumbnails_small and path in self.details:
+                self._thumbnail(path)
         groups = self._groups()
         sheet_number = {path: i + 1 for i, group in enumerate(groups) for path in group}
         self.page_count_var.set(f'{len(self.pages)} elementos · {len(groups)} hojas')
@@ -1204,7 +1272,12 @@ class ReveloApp:
                               fg=BG if selected else ACCENT,
                               width=3, font=('Segoe UI', 14, 'bold'), pady=24)
             number.pack(side='left', padx=(0, 11))
-            thumb = tk.Label(slot, image=self.thumbnails_small[path], bg=SURFACE_2,
+            group = groups[sheet_number[path]-1]
+            image = (self._sheet_thumbnail(group, sheet_number[path]-1)
+                     if self.layout_template.get() == 'Diseño libre' and
+                     any(p in self.layout_items for p in group)
+                     else self.thumbnails_small[path])
+            thumb = tk.Label(slot, image=image, bg=SURFACE_2,
                              borderwidth=0, cursor='hand2')
             thumb.pack(side='left', padx=(0, 12))
             text_box = tk.Frame(slot, bg=SURFACE_2)
@@ -1217,7 +1290,10 @@ class ReveloApp:
             dim = self.details.get(path, (0, 0))
             subtext = ('Portada fija · inicio del documento' if is_cover else
                        f'Hoja {sheet_number[path]} · página independiente' if path in self.special_pages else
-                       f'Hoja {sheet_number[path]} · {dim[0]} × {dim[1]} px')
+                       f'Hoja {sheet_number[path]} · diseño libre (vista de hoja)'
+                       if self.layout_template.get() == 'Diseño libre' and
+                          any(p in self.layout_items for p in group)
+                       else f'Hoja {sheet_number[path]} · {dim[0]} × {dim[1]} px')
             sub = self._label(text_box, subtext, color=ACCENT if is_cover else MUTED,
                               size=9, bg=SURFACE_2, anchor='w')
             sub.pack(fill='x', pady=(5,0))
@@ -1350,6 +1426,8 @@ class ReveloApp:
         return ExportOptions(
             paper=self.paper.get(), orientation=self.orientation.get(),
             fit=self.fit.get(), dpi=int(self.dpi.get()), fmt=fmt,
+            paper_background=self.paper_background.get(),
+            paper_background_color=self.paper_background_color.get(),
             binding=self.binding.get() == "Sí",
             pdf_page_paths=frozenset(self.pdf_origins),
             photos_per_page=int(self.per_sheet.get()),
@@ -1631,6 +1709,8 @@ class ReveloApp:
         return {
             "paper": self.paper.get(), "orientation": self.orientation.get(),
             "fit": self.fit.get(), "dpi": int(self.dpi.get()),
+            "paper_background": self.paper_background.get(),
+            "paper_background_color": self.paper_background_color.get(),
             "fmt": self._options().fmt, "binding": self.binding.get() == "Sí",
             "photos_per_page": int(self.per_sheet.get()),
             "layout_template": self.layout_template.get(),
@@ -1736,11 +1816,14 @@ class ReveloApp:
         self.paper.set(settings["paper"])
         self.orientation.set(settings["orientation"])
         self.fit.set(settings["fit"])
+        self.paper_background.set(settings.get("paper_background", "Blanco"))
+        self.paper_background_color.set(settings.get("paper_background_color", "#FFFFFF"))
         self.dpi.set(str(settings["dpi"]))
         self.output_format.set("Imágenes (mismo formato)" if settings["fmt"] == "Imagenes" else settings["fmt"])
         self.binding.set("Sí" if settings["binding"] else "No")
         self.per_sheet.set(str(settings["photos_per_page"]))
         self.layout_template.set(settings.get("layout_template", "Cuadrícula"))
+        self.sheet_thumbnails.clear()
         self.numbering_enabled.set(settings.get("numbering_enabled", False))
         self.numbering_position.set(settings.get("numbering_position", "Exterior"))
         self.numbering_skip_special.set(settings.get("numbering_skip_special", True))

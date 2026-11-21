@@ -1,3 +1,62 @@
+REVELO v1.7.5 — FONDO DEL PAPEL Y VISTA SINCRONIZADA
+======================================================================
+
+ESTADO: CANDIDATA A STABLE. La v1.6.2 STABLE/FROZEN permanece
+congelada. La compilación sigue siendo EN CARPETA.
+
+CAMBIOS
+
+1. FONDO EDITABLE EN «AJUSTAR (SIN RECORTAR)»
+   En la fila de información del menú principal aparece «FONDO DEL PAPEL».
+   Mantiene el encaje sin recortar y permite elegir Blanco (predeterminado),
+   Crema, Aguamarina, Azul noche o Personalizado → «Color…».
+   No cambia la fotografía original ni su proporción, solo el fondo de la
+   hoja y de los huecos. El color se conserva en el proyecto .revelo y se
+   aplica por igual a la vista previa, PDF, Word e imágenes.
+   El selector se deshabilita cuando se utiliza otro modo de encaje;
+   el fondo propio de «Diseño libre» tiene prioridad sobre el general.
+
+2. MINIATURAS EN TIEMPO REAL DE COMPOSICIONES LIBRES
+   Al guardar una composición libre, «Orden del contenido» muestra la hoja
+   compuesta con las fotografías, las posiciones y el fondo escogido.
+   La biblioteca izquierda conserva las miniaturas individuales originales,
+   para que sigas identificando qué foto estás ordenando.
+   La miniatura se actualiza al cambiar orientación, papel, encaje o fondo.
+
+3. ENTRADA NUMÉRICA DE GIRO
+   En «Diseño libre», escribe el ángulo (por ejemplo 31 o -22,5) al lado
+   del deslizador. Se aplica automáticamente al terminar de escribir o al
+   pulsar Intro, sin necesidad de mover la barra. El giro queda guardado
+   en la composición; acepta decimales y mantiene la zona neutra de 0°.
+
+COMPATIBILIDAD Y CUIDADOS
+
+- Los proyectos antiguos sin fondo configurable mantienen Blanco.
+- Las portadas y separadores siguen utilizando sus fondos propios.
+- Un PDF externo que se conserva como página cerrada no se interpreta
+  como una fotografía libremente editable si no contiene originales.
+- El programa no reescribe ni modifica archivos de origen.
+
+ACTUALIZAR DESDE v1.7.4 (GITHUB)
+
+1. Descomprime Revelo_v1_7_5_ACTUALIZACION.zip.
+2. Sube los seis archivos actualizados a la raíz del repositorio; el archivo
+   test_v175_paper_background_and_thumbnail.py va dentro de tests/.
+3. Haz «Commit changes» en GitHub.
+4. En Actions descarga «Revelo-Windows-CARPETA» cuando termine en verde.
+5. Extrae la carpeta completa y abre Revelo.exe con sus dependencias.
+   No debes modificar el workflow de GitHub ni instalar Python.
+
+PRUEBAS RECOMENDADAS EN TU WINDOWS
+
+1. Abre Diseño libre con dos fotos, elige fondo Azul noche, guarda y mira
+   las miniaturas de la derecha sin abrir Previsualización.
+2. Escribe -22,5 en Giro y comprueba que la fotografía rota al confirmar.
+3. Elige «Ajustar (sin recortar)», selecciona Crema y exporta PDF y Word.
+4. Guarda y reabre un proyecto .revelo: el fondo debe seguir en Crema.
+
+--------------------------------------------------------------------
+
 REVELO v1.7.4 — RECORTE CONFIRMADO Y CONTROLES DE EDICIÓN COHERENTES
 ======================================================================
 

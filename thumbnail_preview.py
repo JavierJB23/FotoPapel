@@ -10,7 +10,7 @@ from PIL import Image, ImageOps
 
 from processor import (ExportOptions, PAPER_SIZES, printable_box,
                        _flatten_rgb, _trim_revelo_like_page_background,
-                       _render_inside, _extended_background)
+                       _render_inside, _extended_background, paper_background_color)
 from photo_edits import apply_edits
 
 
@@ -66,10 +66,11 @@ def render_photo_thumbnail(path: Path, opts: ExportOptions, *,
                 finally:
                     inside.close()
                 return paper
-            inner = _render_inside(edited, (box[2]-box[0],box[3]-box[1]),opts.fit)
+            inner = _render_inside(edited, (box[2]-box[0],box[3]-box[1]),opts.fit,
+                                   background=paper_background_color(opts))
             if not opts.binding:
                 return inner
-            paper=Image.new('RGB',(out_w,out_h),'white')
+            paper=Image.new('RGB',(out_w,out_h), paper_background_color(opts) if opts.fit=='Ajustar (sin recortar)' else 'white')
             paper.paste(inner, box[:2])
             inner.close()
             return paper
