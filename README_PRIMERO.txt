@@ -1,3 +1,19 @@
+REVELO v1.7.5 FIX01 — CABECERA DE AJUSTES COMPACTA
+======================================================================
+
+CORRECCIÓN VISUAL (sin cambios en exportación ni cálculos):
+- Siete selectores en una sola fila: tamaño, orientación, encaje, calidad,
+  exportación, encuadernación y fondo del papel.
+- Anchuras adaptadas al texto más largo; se aprovecha el espacio extra
+  de las ventanas anchas y también cabe en el mínimo de 1100 píxeles.
+- Fondo del papel mantiene sus paletas y el color personalizado mediante
+  el botón «…» que aparece al seleccionar «Personalizado».
+- La información de tamaño/PPP queda debajo, sin controles nuevos.
+- Se conserva la compilación de GitHub en carpeta; no hay dependencias nuevas.
+
+NOTAS DE LA BASE v1.7.5
+======================================================================
+
 REVELO v1.7.5 — FONDO DEL PAPEL Y VISTA SINCRONIZADA
 ======================================================================
 

@@ -194,6 +194,16 @@ class ReveloApp:
             selectforeground=[("readonly", TEXT)],
         )
         style.configure(
+            "Compact.TCombobox", fieldbackground=SURFACE_2, background=SURFACE_2,
+            foreground=TEXT, bordercolor=BORDER, arrowcolor=ACCENT,
+            font=("Segoe UI", 9), padding=3, borderwidth=1,
+        )
+        style.map(
+            "Compact.TCombobox", fieldbackground=[("readonly", SURFACE_2)],
+            foreground=[("readonly", TEXT)], selectbackground=[("readonly", SURFACE_2)],
+            selectforeground=[("readonly", TEXT)],
+        )
+        style.configure(
             "Custom.Vertical.TScrollbar", background=SURFACE_2,
             troughcolor=SURFACE, bordercolor=SURFACE, arrowcolor=MUTED,
         )
@@ -243,43 +253,80 @@ class ReveloApp:
         settings = tk.Frame(setting_outer, bg=SURFACE, padx=17, pady=14,
                             highlightbackground=BORDER, highlightthickness=1)
         settings.pack(fill="x")
-        # Una sola línea, con anchuras proporcionadas al contenido.
-        # grid evita que los cinco primeros controles absorban todo el ancho
-        # dejando el selector de encuadernación en una segunda fila.
+        # Los selectores ocupan solo el espacio necesario para su opción más larga.
+        # Los siete grupos permanecen en una única fila, incluso en ventanas compactas.
+        # Se conservan las variables y callbacks anteriores; es solo maquetación.
         row = tk.Frame(settings, bg=SURFACE)
         row.pack(fill="x")
+        self.settings_controls_row = row
         fields = [
-            ("TAMAÑO DE IMPRESIÓN", self.paper, list(PAPER_SIZES), 112, 3),
-            ("ORIENTACIÓN", self.orientation, ["Automática", "Vertical", "Horizontal"], 100, 2),
-            ("ENCAJE EN EL PAPEL", self.fit, list(FIT_MODES), 180, 5),
-            ("CALIDAD", self.dpi, ["150", "300", "600"], 72, 1),
-            ("EXPORTAR COMO", self.output_format, ["PDF", "Word", "Imágenes (mismo formato)"], 140, 3),
-            ("MÁRGENES DE ENCUADERNACIÓN", self.binding, ["No", "Sí"], 204, 3),
+            ("TAMAÑO DE IMPRESIÓN", self.paper, list(PAPER_SIZES), 140),
+            ("ORIENTACIÓN", self.orientation, ["Automática", "Vertical", "Horizontal"], 100),
+            ("ENCAJE EN EL PAPEL", self.fit, list(FIT_MODES), 192),
+            ("CALIDAD", self.dpi, ["150", "300", "600"], 58),
+            ("EXPORTAR COMO", self.output_format, ["PDF", "Word", "Imágenes (mismo formato)"], 185),
+            ("MÁRGENES DE ENCUADERNACIÓN", self.binding, ["No", "Sí"], 194),
+            ("FONDO DEL PAPEL", self.paper_background,
+             ["Blanco", "Crema", "Aguamarina", "Azul noche", "Personalizado"], 145),
         ]
-        for column, (caption, variable, choices, minwidth, weight) in enumerate(fields):
-            row.grid_columnconfigure(column, weight=weight, minsize=minwidth)
-            self._field(row, caption, variable, choices, column=column,
-                        compact=(column == 5), last=(column == 5))
+        settings_holders = []
+        for column, (caption, variable, choices, width) in enumerate(fields):
+            row.grid_columnconfigure(column, minsize=width)
+            holder = tk.Frame(row, bg=SURFACE, width=width, height=60)
+            settings_holders.append(holder)
+            holder.grid_propagate(False)  # Evita desplegables desmesurados.
+            holder.grid(row=0, column=column, sticky="new", padx=(0, 0 if column == 6 else 6))
+            self._label(holder, caption, color=MUTED, size=8, weight="bold").pack(
+                anchor="w", pady=(0, 7))
+            if column == 6:
+                fondo_row = tk.Frame(holder, bg=SURFACE)
+                fondo_row.pack(fill="x")
+                self.paper_background_combo = ttk.Combobox(
+                    fondo_row, textvariable=variable, values=choices,
+                    state="readonly", style="Compact.TCombobox", width=1,
+                    font=("Segoe UI", 9))
+                self.paper_background_combo.pack(side="left", fill="x", expand=True)
+                # El selector personalizado sigue accesible sin crear otra fila.
+                self.paper_background_button = tk.Button(
+                    fondo_row, text="…", command=self.choose_paper_background_color,
+                    bg=SURFACE_2, fg=ACCENT, font=("Segoe UI", 10, "bold"),
+                    bd=0, relief="flat", cursor="hand2", width=2,
+                    padx=1, pady=4, highlightthickness=0)
+            else:
+                ttk.Combobox(holder, values=choices, textvariable=variable,
+                             state="readonly", style="Compact.TCombobox", width=1,
+                             font=("Segoe UI", 9)).pack(fill="x")
+
+        # Aprovechar espacio en monitores grandes sin que ninguno de los textos
+        # largos se corte; al estrechar la ventana se recuperan los mínimos.
+        compact_widths = (140, 100, 192, 58, 185, 194, 145)
+        spacious_widths = (153, 119, 228, 70, 225, 205, 175)
+        last_widths = [None]
+
+        def resize_settings(event):
+            spare = max(0, event.width - sum(compact_widths))
+            budget = sum(spacious_widths) - sum(compact_widths)
+            progress = min(1.0, spare / budget) if budget else 0
+            widths = tuple(round(lo + (hi - lo) * progress)
+                           for lo, hi in zip(compact_widths, spacious_widths))
+            if widths == last_widths[0]:
+                return
+            last_widths[0] = widths
+            for column, width in enumerate(widths):
+                row.grid_columnconfigure(column, minsize=width)
+                settings_holders[column].configure(width=width - (6 if column < 6 else 0))
+
+        row.bind("<Configure>", resize_settings, add="+")
+
         info = tk.Frame(settings, bg=SURFACE)
-        info.pack(fill="x", pady=(12, 0))
+        info.pack(fill="x", pady=(8, 0))
         self._label(info, "●", color=ACCENT, size=10).pack(side="left")
         self._label(info, "  ", color=MUTED).pack(side="left")
         self._label(info, "", size=10, color=MUTED, textvariable=self.overview).pack(side="left")
         self._label(info, "  ·  ", color=MUTED).pack(side="left")
         self._label(info, "", textvariable=self.layout_info, color=MUTED).pack(side="left")
-        background_panel = tk.Frame(info, bg=SURFACE)
-        background_panel.pack(side='right', padx=(15, 0))
-        self._label(background_panel, 'FONDO DEL PAPEL', color=MUTED,
-                    size=8, weight='bold').pack(side='left', padx=(0, 7))
-        self.paper_background_combo = ttk.Combobox(
-            background_panel, textvariable=self.paper_background,
-            values=('Blanco', 'Crema', 'Aguamarina', 'Azul noche', 'Personalizado'),
-            width=13, state='readonly', style='Custom.TCombobox')
-        self.paper_background_combo.pack(side='left')
-        self.paper_background_button = self._button(
-            background_panel, 'Color…', self.choose_paper_background_color, small=True)
-        self.fit.trace_add('write', lambda *_: self._update_paper_background_controls())
-        self.paper_background.trace_add('write', lambda *_: self._update_paper_background_controls())
+        self.fit.trace_add("write", lambda *_: self._update_paper_background_controls())
+        self.paper_background.trace_add("write", lambda *_: self._update_paper_background_controls())
         self._update_paper_background_controls()
         for var in (self.paper, self.orientation, self.dpi, self.fit, self.output_format, self.binding, self.per_sheet):
             var.trace_add("write", self._update_overview)
@@ -390,7 +437,7 @@ class ReveloApp:
         self.paper_background_combo.configure(state='readonly' if enabled else 'disabled')
         custom = enabled and self.paper_background.get() == 'Personalizado'
         if custom and not self.paper_background_button.winfo_manager():
-            self.paper_background_button.pack(side='left', padx=(7, 0))
+            self.paper_background_button.pack(side="right", padx=(3, 0))
         if not custom and self.paper_background_button.winfo_manager():
             self.paper_background_button.pack_forget()
 
