@@ -398,3 +398,24 @@ REVELO v1.6.2 STABLE/FROZEN permanece como referencia segura.
 
 
 FIX02 cabecera compacta: corregida holgura horizontal para Windows/GitHub Actions.
+
+
+============================================================
+REVELO v1.8 - ESTUDIO EDITORIAL (INTERFAZ)
+============================================================
+- Nueva interfaz aprobada, inspirada en la opción B Estudio Editorial.
+- Conserva azul noche y aguamarina, con cabecera editorial,
+  tipografía y tarjetas más cuidadas y controles con respuesta al cursor.
+- Se preservan los siete controles de impresión en una sola fila.
+- Se preserva la altura del panel Orden del contenido; distribución
+  verificada en 1100x730, 1270x845 y 1600x900.
+- El motor de fotos, PDF, Word, QR, proyectos, recortes y maquetación
+  no se ha modificado. La versión v1.7.5 FIX03 queda congelada.
+
+ACTUALIZAR DESDE v1.7.5 FIX03
+Sustituir main.py y README_PRIMERO.txt en la raíz,
+Añadir editorial_art.py en la raíz,
+Añadir tests/test_v18_editorial_layout.py dentro de tests/.
+No modificar .github/workflows/windows-exe.yml, requirements.txt ni
+los archivos del motor; la compilación Windows sigue siendo en carpeta.
+Nota: el arte editorial está integrado dentro de editorial_art.py.
