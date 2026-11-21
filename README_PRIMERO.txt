@@ -1,3 +1,63 @@
+REVELO v1.7.4 — RECORTE CONFIRMADO Y CONTROLES DE EDICIÓN COHERENTES
+======================================================================
+
+ESTADO: CANDIDATA A STABLE. Conserva Revelo v1.6.2 STABLE/FROZEN
+como respaldo. La compilación sigue siendo EN CARPETA.
+
+MEJORAS
+
+1. RECORTE CONFIRMADO = NUEVA BASE DE EDICIÓN
+   Cuando confirmas «Recortar», Revelo incorpora el corte a un historial
+   reversible. Los giros 90°, volteos y enderezados posteriores actúan SOLO
+   sobre lo que ha quedado dentro, sin volver a sacar zonas descartadas.
+   «Restablecer original» recupera el archivo completo de origen.
+   Los proyectos anteriores siguen abriéndose y migran al historial cuando
+   guardas una edición nueva. Se conserva el historial en .revelo y PDF.
+
+2. REABRIR UNA FOTO EDITADA
+   «Editar fotografía» muestra de entrada el resultado guardado; no vuelve
+   a abrir sobre él la antigua selección de recorte. El botón «Modificar
+   recorte» permite realizar un nuevo corte sobre la imagen actual.
+
+3. CONTROLES Y RUEDA
+   La rueda desplaza los paneles con opciones y no modifica accidentalmente
+   los deslizadores. Los ajustes del editor de foto ofrecen valor numérico
+   editable; el control tiene una zona magnética en su valor de origen:
+   0° para enderezado y 1,00 para brillo/escala/contraste, etcétera.
+   Un doble clic en la barra devuelve el control a su valor neutro.
+   El tamaño en hoja se puede comprobar en directo con «Ver en hoja».
+
+4. COMPOSICIÓN LIBRE CON OCHO ASAS VISIBLES
+   Selecciona una foto y tira de cualquiera de sus cuatro esquinas para
+   escalar proporcionalmente, o de los cuatro laterales para cambiar ancho
+   y alto por separado. Ya no depende de un único rincón oculto; los
+   cambios aparecen en la vista y en el PDF/Word. En diseños irregulares
+   también hay un asa para modificar visualmente el reparto de espacio.
+   «Doble clic» sigue enviando una fotografía delante de las demás.
+
+5. PERSONALIZACIÓN CONSISTENTE
+   Se mantienen los controles directos por arrastre en portada, pie de foto
+   y tamaño de hoja, además de los valores numéricos disponibles.
+   Los originales siempre permanecen intactos.
+
+INSTALACIÓN EN GITHUB
+
+1. Descomprime Revelo_v1_7_4_ACTUALIZACION.zip.
+2. Sube sus archivos a tu repositorio, conservando tests/ y sus rutas.
+3. Pulsa «Commit changes»; Actions generará Revelo-Windows-CARPETA.
+4. Descarga, extrae todo y abre Revelo.exe sin separar su carpeta.
+5. No cambies el workflow ni instales Python en tu PC.
+
+PRUEBA RECOMENDADA
+
+1. Recorta una porción pequeña y confirma el corte.
+2. Endereza a +15° y -15°: la imagen de origen exterior no reaparece.
+3. Guarda, sal, vuelve a editar: abre sobre el resultado, sin selección vieja.
+4. Prueba rueda sobre un slider: se desplaza el panel, no cambia el valor.
+5. En Diseño libre estira una foto de lado y de esquina; exporta un PDF.
+
+--------------------------------------------------------------------
+
 REVELO v1.7.3 — ARRASTRE, ESCALA Y COMPOSICIÓN FIELES A LA IMPRESIÓN
 ======================================================================
 

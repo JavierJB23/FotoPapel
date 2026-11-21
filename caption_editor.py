@@ -237,11 +237,20 @@ def edit_caption(parent, path: Path, initial: dict | None,
              justify='left',anchor='w').pack(fill='x')
     scale_row=tk.Frame(body,bg=SURFACE)
     scale_row.pack(fill='x')
-    tk.Scale(scale_row,from_=25,to=100,resolution=1,variable=photo_scale,orient='horizontal',
+    photo_scale_slider=tk.Scale(scale_row,from_=25,to=100,resolution=1,variable=photo_scale,orient='horizontal',
              showvalue=False,bg=SURFACE,fg=TEXT,highlightthickness=0,
-             troughcolor=SURFACE_2,activebackground=ACCENT).pack(side='left',fill='x',expand=True)
-    tk.Label(scale_row,textvariable=photo_scale,bg=SURFACE,fg=ACCENT,
-             font=('Segoe UI',10,'bold'),width=5).pack(side='left')
+             troughcolor=SURFACE_2,activebackground=ACCENT)
+    photo_scale_slider.pack(side='left',fill='x',expand=True)
+    scale_spin=tk.Spinbox(scale_row,from_=25,to=100,textvariable=photo_scale,
+                         width=5,bg=SURFACE_2,fg=ACCENT,insertbackground=ACCENT,
+                         relief='flat',justify='center',font=('Segoe UI',10,'bold'))
+    scale_spin.pack(side='left',padx=(6,0))
+    photo_scale_slider.bind('<Double-Button-1>',lambda _e:photo_scale.set(100))
+    def snap_photo_scale(*_):
+        try:value=int(photo_scale.get())
+        except (ValueError,tk.TclError):return
+        if value>=98 and value<100:photo_scale.set(100)
+    photo_scale.trace_add('write',snap_photo_scale)
     heading('TÍTULO')
     entry(title)
     heading('DESCRIPCIÓN / LUGAR / FECHA')

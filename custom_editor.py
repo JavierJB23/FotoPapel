@@ -461,6 +461,35 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
              highlightthickness=0,length=165).grid(row=0,column=3,sticky='ew')
     zoom_controls.columnconfigure(1,weight=1)
     zoom_controls.columnconfigure(3,weight=1)
+    # Valores exactos para repetir composiciones; las barras siguen sirviendo.
+    zoom_numeric={}
+    for col,key in ((1,'image_zoom_x'),(3,'image_zoom_y')):
+        text=tk.StringVar(value=f'{fields[key].get():.2f}')
+        zoom_numeric[key]=text
+        def commit_zoom(_e=None,*,k=key,v=text):
+            try:target=max(.25,min(3.0,float(v.get().replace(',','.'))))
+            except ValueError:target=fields[k].get()
+            fields[k].set(1.0 if abs(target-1)<.075 else round(target,2))
+            v.set(f'{fields[k].get():.2f}')
+        ent=tk.Entry(zoom_controls,textvariable=text,width=5,bg=PANEL,fg=ACCENT,
+                     insertbackground=ACCENT,justify='center',relief='flat')
+        ent.grid(row=1,column=col,sticky='e',pady=(0,3))
+        ent.bind('<Return>',commit_zoom);ent.bind('<FocusOut>',commit_zoom)
+        def sync_text(*_,k=key,v=text):
+            try:v.set(f'{fields[k].get():.2f}')
+            except (tk.TclError,ValueError):pass
+        fields[key].trace_add('write',sync_text)
+    def magnetic_zoom(*_):
+        if getattr(window,'_zoom_snap_active',False):return
+        for key in ('image_zoom_x','image_zoom_y'):
+            try:value=fields[key].get()
+            except tk.TclError:continue
+            if .0001<abs(value-1.0)<.075:
+                window._zoom_snap_active=True
+                try:fields[key].set(1.0)
+                finally:window._zoom_snap_active=False
+    for key in ('image_zoom_x','image_zoom_y'):
+        fields[key].trace_add('write',magnetic_zoom)
     tk.Label(right,text='Libre: mueve la foto y ajusta ancho/alto. El espacio libre usa el color o difuminado elegido.',
              bg=SURFACE,fg=MUTED,font=('Segoe UI',8),wraplength=520,justify='left').pack(anchor='w',pady=(0,5))
     canvas = tk.Canvas(right, bg=PANEL, highlightthickness=0, cursor='fleur')

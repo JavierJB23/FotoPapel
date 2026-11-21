@@ -32,6 +32,9 @@ def validate_layout_item(spec: dict | None) -> dict:
         if not (0<=x<=1 and 0<=y<=1 and .05<=w<=1.5 and .05<=h<=1.5):
             raise ValueError('Dimensiones del diseño fuera de rango')
         out['rect']=[round(v,5) for v in (x,y,w,h)]
+    if 'stretch' in spec:
+        if type(spec['stretch']) is not bool:raise ValueError('Distorsión libre no válida')
+        out['stretch']=spec['stretch']
     if 'angle' in spec:
         angle=spec['angle']
         if isinstance(angle,bool) or not isinstance(angle,(int,float)) or not -180<=angle<=180:
@@ -74,7 +77,7 @@ def free_default(index:int,count:int)->dict:
     return {'rect':[round(cx,4),round(cy,4),round(width,4),round(height,4)], 'angle':0.0}
 
 
-def visible_photo_geometry(zone, bounds, image_size, angle=0.0):
+def visible_photo_geometry(zone, bounds, image_size, angle=0.0, *, stretch=False):
     """La selección rodea SOLO la fotografía renderizada, no su celda vacía.
 
     Devuelve rectángulo real sin girar y rectángulo exterior tras el giro.
@@ -86,7 +89,8 @@ def visible_photo_geometry(zone, bounds, image_size, angle=0.0):
     height=max(10,round((y1-y0)*rh))
     sw,sh=image_size
     ratio=min(width/max(1,sw),height/max(1,sh))
-    iw=max(1,round(sw*ratio));ih=max(1,round(sh*ratio))
+    iw=width if stretch else max(1,round(sw*ratio))
+    ih=height if stretch else max(1,round(sh*ratio))
     px=round(x0+(x1-x0)*cx);py=round(y0+(y1-y0)*cy)
     photo=(px-iw//2,py-ih//2,px+(iw+1)//2,py+(ih+1)//2)
     a=radians(angle)
@@ -179,7 +183,7 @@ def edit_sheet(parent,paths:list[Path],template:str,initial:dict[Path,dict],
     tk.Label(dialog,text='TAMAÑO DE FOTOGRAFÍAS' if not is_free else 'COMPOSICIÓN LIBRE',
              font=('Segoe UI',17,'bold'),fg='white',bg=NAVY).pack(anchor='w',padx=20,pady=(17,4))
     guide=('Haz clic en una fotografía para seleccionarla. Usa la barra para modificar su espacio.' if not is_free
-           else 'Arrastra para mover o escalar la foto real · Doble clic: traer delante · Rueda: tamaño · Shift + rueda: giro.')
+           else 'Arrastra la foto para moverla · Tira de esquinas (proporcional) o laterales (ancho/alto) · Doble clic: delante.')
     tk.Label(dialog,text=guide,bg=NAVY,fg=MUTED,font=('Segoe UI',10)).pack(anchor='w',padx=20,pady=(0,11))
     toolbar=tk.Frame(dialog,bg=PANEL,padx=15,pady=10)
     toolbar.pack(fill='x',padx=18)
@@ -193,6 +197,13 @@ def edit_sheet(parent,paths:list[Path],template:str,initial:dict[Path,dict],
                          bg=PANEL,fg=CREAM,activebackground=AQUA,highlightthickness=0,
                          troughcolor='#2F455D')
     size_slider.pack(side='left',padx=8)
+    size_input=tk.Spinbox(toolbar,from_=35 if is_free else 20,to=160 if is_free else 80,
+                          increment=1,textvariable=size,width=5,bg=PANEL,fg=AQUA,
+                          insertbackground='white',relief='flat',justify='center')
+    size_input.pack(side='left',padx=(0,5))
+    size_input.bind('<Return>',lambda _e:(slider_changed(),dialog.focus_set()))
+    size_input.bind('<FocusOut>',lambda _e:slider_changed())
+    size_input.bind('<MouseWheel>',lambda _e:'break')
     angle=tk.DoubleVar(value=0)
     angle_label=tk.Label(toolbar,text='Giro °',fg='white',bg=PANEL)
     angle_label.pack(side='left',padx=(18,5))
@@ -201,8 +212,19 @@ def edit_sheet(parent,paths:list[Path],template:str,initial:dict[Path,dict],
                           bg=PANEL,fg=CREAM,activebackground=AQUA,highlightthickness=0,
                           troughcolor='#2F455D')
     angle_slider.pack(side='left')
+    angle_entry=tk.Entry(toolbar,textvariable=angle,width=6,fg=AQUA,bg=PANEL,
+                         insertbackground='white',relief='flat',justify='center')
+    angle_entry.pack(side='left',padx=(7,0))
+    angle_entry.bind('<Return>',lambda _ev:dialog.focus_set())
+    angle_entry.bind('<MouseWheel>',lambda _ev:'break')
+    angle_slider.bind('<MouseWheel>',lambda _ev:'break')
+    size_slider.bind('<MouseWheel>',lambda _ev:'break')
+    size_slider.bind('<Double-Button-1>',lambda _e:size.set(100 if is_free else
+                                  60 if (selected.get()==0 if template!='2 arriba + grande abajo' else selected.get()==2)
+                                  else 50))
+    angle_slider.bind('<Double-Button-1>',lambda _e:angle.set(0))
     if not is_free:
-        angle_label.pack_forget();angle_slider.pack_forget()
+        angle_label.pack_forget();angle_slider.pack_forget();angle_entry.pack_forget()
     if is_free:
         bg_row=tk.Frame(dialog,bg=PANEL,padx=15,pady=7)
         bg_row.pack(fill='x',padx=18,pady=(7,0))
@@ -239,6 +261,7 @@ def edit_sheet(parent,paths:list[Path],template:str,initial:dict[Path,dict],
     photos=[]
     sheet_photo=[None]
     geometry=[None]*len(paths)
+    unrotated_geometry=[None]*len(paths)
     page=[0,0,1,1]
     safe_frame=[0,0,1,1]
     drag={'start':None,'initial':None,'mode':None}
@@ -255,6 +278,28 @@ def edit_sheet(parent,paths:list[Path],template:str,initial:dict[Path,dict],
         width=max(15,round(wmm*scale));height=max(15,round(hmm*scale))
         left=(cw-width)//2;top=(ch-height)//2
         return left,top,width,height
+
+    def resize_handles(rect):
+        l,t,r,b=rect;mx=(l+r)/2;my=(t+b)/2
+        return {'nw':(l,t),'n':(mx,t),'ne':(r,t),'e':(r,my),
+                'se':(r,b),'s':(mx,b),'sw':(l,b),'w':(l,my)}
+
+    def handle_hit(mx,my,rect):
+        for name,(hx,hy) in resize_handles(rect).items():
+            if abs(mx-hx)<=12 and abs(my-hy)<=12:return name
+        return None
+
+    def _make_stretch(index):
+        spec=state[paths[index]]
+        if spec.get('stretch'):return
+        # Convertir una celda de encaje antigua en el tamaño real de su foto.
+        rect=unrotated_geometry[index]
+        if rect is None:return
+        x0,y0,x1,y1=safe_frame;aw=max(1,x1-x0);ah=max(1,y1-y0)
+        spec['rect']=[spec['rect'][0],spec['rect'][1],
+                     max(.05,min(1.5,(rect[2]-rect[0])/aw)),
+                     max(.05,min(1.5,(rect[3]-rect[1])/ah))]
+        spec['stretch']=True
 
     def draw():
         if not dialog.winfo_exists():return
@@ -298,16 +343,19 @@ def edit_sheet(parent,paths:list[Path],template:str,initial:dict[Path,dict],
                 cap=opts.captions.get(paths[i],{})
                 scale=float(cap.get('photo_scale',1.0))*float(opts.photo_edits.get(paths[i],{}).get('print_scale',1.0))
                 scaled_bounds=[bounds[0],bounds[1],bounds[2]*scale,bounds[3]*scale]
-                unrotated,rect=visible_photo_geometry(zone,scaled_bounds,img.size,deg)
+                unrotated,rect=visible_photo_geometry(zone,scaled_bounds,img.size,deg,
+                                                       stretch=bool(state[paths[i]].get('stretch',False)))
             else:
                 rect=rects[i];unrotated=rect;deg=0.0
             geometry[i]=rect
+            unrotated_geometry[i]=unrotated
             l,t,r,b=rect
             if is_free:
                 iw=max(1,unrotated[2]-unrotated[0]);ih=max(1,unrotated[3]-unrotated[1])
             else:
                 iw=max(10,r-l);ih=max(10,b-t)
-            fitted=ImageOps.contain(img,(iw,ih),Image.Resampling.BILINEAR)
+            fitted=(img.resize((iw,ih),Image.Resampling.BILINEAR) if is_free and state[paths[i]].get('stretch',False)
+                    else ImageOps.contain(img,(iw,ih),Image.Resampling.BILINEAR))
             if is_free and abs(deg)>0.5:
                 with_alpha=fitted.convert('RGBA')
                 fitted.close()
@@ -323,8 +371,11 @@ def edit_sheet(parent,paths:list[Path],template:str,initial:dict[Path,dict],
                                     dash=() if i==selected.get() else (3,4))
             canvas.create_text(l+5,t+5,anchor='nw',text=str(i+1),fill=CREAM,
                                font=('Segoe UI',10,'bold'))
-            if is_free and i==selected.get():
+            if not is_free and i==selected.get():
                 canvas.create_rectangle(r-7,b-7,r+7,b+7,fill=AQUA,outline=NAVY,width=2)
+            if is_free and i==selected.get():
+                for hx,hy in resize_handles(rect).values():
+                    canvas.create_rectangle(hx-6,hy-6,hx+6,hy+6,fill=AQUA,outline=NAVY,width=2)
         if not is_free:
             info.set('Las divisiones cambian de tamaño, sin romper la disposición '+template.lower()+'.')
 
@@ -346,8 +397,17 @@ def edit_sheet(parent,paths:list[Path],template:str,initial:dict[Path,dict],
 
     def slider_changed(_=None):
         if frozen[0]:return
-        i=selected.get();val=float(size.get())
+        i=selected.get()
+        try:val=float(size.get())
+        except (ValueError,tk.TclError):return
+        # Resistencia suave en 100 % (libre) o reparto predeterminado.
+        special=i==0 if template!='2 arriba + grande abajo' else i==2
+        neutral=100 if is_free else 60 if special else 50
+        if abs(val-neutral)<=2 and val!=neutral:
+            frozen[0]=True;size.set(neutral);frozen[0]=False
+            val=float(neutral)
         if is_free:
+            _make_stretch(i)
             spec=state[paths[i]]
             initial_spec=free_default(i,len(paths))['rect']
             old=spec['rect'];new_w=max(.05,min(1.5,initial_spec[2]*val/100))
@@ -364,7 +424,9 @@ def edit_sheet(parent,paths:list[Path],template:str,initial:dict[Path,dict],
 
     def angle_changed(_=None):
         if not frozen[0] and is_free:
-            state[paths[selected.get()]]['angle']=float(angle.get())
+            deg=float(angle.get())
+            if abs(deg)<2.1:deg=0.;angle.set(0.)
+            state[paths[selected.get()]]['angle']=deg
             draw()
 
     def hit_test(mx,my):
@@ -375,35 +437,78 @@ def edit_sheet(parent,paths:list[Path],template:str,initial:dict[Path,dict],
         return None
 
     def press(event):
-        found=hit_test(event.x,event.y)
-        if found is None:return
-        selected.set(found);sync_controls()
-        rect=geometry[found]
-        mode=('resize' if is_free and abs(event.x-rect[2])<18 and abs(event.y-rect[3])<18
-              else 'move' if is_free else 'select')
-        drag.update(start=(event.x,event.y),initial=list(state[paths[found]].get('rect',[])),mode=mode)
+        found=None;handle=None
+        if is_free:
+            # Un asa seleccionada prevalece incluso bajo una foto superpuesta.
+            i=selected.get()
+            if geometry[i]:
+                handle=handle_hit(event.x,event.y,geometry[i])
+                if handle:found=i
+            if found is None:
+                for i in sorted(range(len(paths)),key=lambda k:state[paths[k]].get('z',k),reverse=True):
+                    if geometry[i] and (h:=handle_hit(event.x,event.y,geometry[i])):
+                        found=i;handle=h;break
+        if found is None:found=hit_test(event.x,event.y)
+        if found is None:
+            drag['start']=None;return
+        selected.set(found)
+        if is_free and handle:
+            _make_stretch(found)
+        sync_controls()
+        if is_free:
+            mode='resize:'+handle if handle else 'move'
+        else:
+            r=geometry[found]
+            mode='template_resize' if abs(event.x-r[2])<20 and abs(event.y-r[3])<20 else 'select'
+        drag.update(start=(event.x,event.y),initial=list(state[paths[found]].get('rect',[])),
+                    initial_size=float(size.get()),mode=mode)
         draw()
 
     def moving(event):
-        if not is_free or drag['start'] is None:return
+        if drag['start'] is None:return
+        if not is_free:
+            if drag.get('mode')=='template_resize':
+                i=selected.get();x0,y0,x1,y1=safe_frame
+                dx=(event.x-drag['start'][0])/max(1,x1-x0)*100
+                dy=(event.y-drag['start'][1])/max(1,y1-y0)*100
+                horizontal=(template=='Grande izquierda + 2 derecha' and i==0) or (
+                    template in ('Grande arriba + 2 abajo','2 arriba + grande abajo') and
+                    (i != 0 if template=='Grande arriba + 2 abajo' else i != 2))
+                change=dx if horizontal else dy
+                size.set(max(20,min(80,round(drag['initial_size']+change))))
+            return
         index=selected.get()
         x0,y0,x1,y1=safe_frame
         aw=max(1,x1-x0);ah=max(1,y1-y0)
         dx=(event.x-drag['start'][0])/aw;dy=(event.y-drag['start'][1])/ah
         cx,cy,rw,rh=drag['initial']
-        if drag['mode']=='resize':
-            # Una sola esquina, igual que Word: mantiene proporciones y
-            # aumenta/reduce la foto visible, no una celda invisible.
-            factor=max(.15,min(4.0,1+max(dx/max(.04,rw),dy/max(.04,rh))))
-            factor=min(factor,1.5/max(rw,rh))
-            rw=max(.05,min(1.5,rw*factor));rh=max(.05,min(1.5,rh*factor))
-        elif drag['mode']=='move':
+        mode=drag['mode']
+        if mode and mode.startswith('resize:'):
+            _make_stretch(index)
+            if not state[paths[index]].get('stretch'):
+                return
+            handle=mode.partition(':')[2]
+            # En los laterales se puede estirar horizontal o verticalmente.
+            # Esquinas: conserva las proporciones de la imagen visible.
+            if len(handle)==2:
+                delta_x=(dx if 'e' in handle else -dx)*2
+                delta_y=(dy if 's' in handle else -dy)*2
+                factor=1+max(delta_x/max(.05,rw),delta_y/max(.05,rh),
+                             min(delta_x/max(.05,rw),delta_y/max(.05,rh)))
+                factor=max(.15,min(1.5/max(rw,rh),factor))
+                rw=max(.05,min(1.5,rw*factor));rh=max(.05,min(1.5,rh*factor))
+            else:
+                if handle in ('e','w'):
+                    rw=max(.05,min(1.5,rw+(dx if handle=='e' else -dx)*2))
+                elif handle in ('s','n'):
+                    rh=max(.05,min(1.5,rh+(dy if handle=='s' else -dy)*2))
+        elif mode=='move':
             cx=max(0,min(1,cx+dx));cy=max(0,min(1,cy+dy))
             if abs(cx-.5)<.012:cx=.5
             if abs(cy-.5)<.012:cy=.5
         state[paths[index]]['rect']=[round(q,5) for q in (cx,cy,rw,rh)]
         draw()
-        if drag['mode']=='move':
+        if mode=='move':
             l,t,pw,ph=page
             if cx==.5:canvas.create_line(l+pw/2,t,l+pw/2,t+ph,fill=AQUA,width=2,dash=(4,4))
             if cy==.5:canvas.create_line(l,t+ph/2,l+pw,t+ph/2,fill=AQUA,width=2,dash=(4,4))
@@ -425,13 +530,7 @@ def edit_sheet(parent,paths:list[Path],template:str,initial:dict[Path,dict],
 
     def release(_event):drag['start']=None
     def wheel(event):
-        direction=1 if event.delta>0 else -1
-        if not is_free:
-            size.set(min(80,max(20,int(size.get())+direction)))
-        elif event.state & 0x1:
-            angle.set(max(-180,min(180,int(angle.get())+direction*5)))
-        else:
-            size.set(max(35,min(160,int(size.get())+direction*5)))
+        # La rueda nunca cambia ajustes por accidente. Para dimensionar, asas o barra.
         return 'break'
 
     def reset():

@@ -12,7 +12,7 @@ DEFAULT = {
     'turns': 0, 'flip_h': False, 'flip_v': False, 'straighten': 0.0,
     'crop': None, 'brightness': 1.0, 'contrast': 1.0,
     'saturation': 1.0, 'sharpness': 1.0, 'auto_correct': False,
-    'print_scale': 1.0,
+    'print_scale': 1.0, 'ops': [],
 }
 LIMITS = {'brightness': (0.2, 2.5), 'contrast': (0.2, 2.5),
           'saturation': (0.0, 2.5), 'sharpness': (0.0, 3.0),
@@ -26,6 +26,26 @@ def validate_edits(value: dict | None) -> dict:
     if not isinstance(value, dict) or any(k not in DEFAULT for k in value):
         raise ValueError('Ediciones de fotografía no reconocidas')
     result = dict(DEFAULT)
+    result['ops'] = []
+    if 'ops' in value:
+        ops = value['ops']
+        if not isinstance(ops, list) or len(ops) > 48:
+            raise ValueError('Historial de edición no válido')
+        for op in ops:
+            if not isinstance(op, dict) or op.get('kind') not in ('crop','turn','flip_h','flip_v','straighten') or set(op) != {'kind','value'}:
+                raise ValueError('Operación fotográfica no reconocida')
+            kind, v = op['kind'], op['value']
+            if kind == 'crop':
+                if not isinstance(v,(list,tuple)) or len(v)!=4 or any(type(n) not in (float,int) or not math.isfinite(n) for n in v) or not (0<=v[0]<v[2]<=1 and 0<=v[1]<v[3]<=1 and v[2]-v[0]>=.005 and v[3]-v[1]>=.005):
+                    raise ValueError('Recorte confirmado no válido')
+                v = [float(n) for n in v]
+            elif kind == 'turn':
+                if type(v) is not int or v not in (1,2,3):raise ValueError('Giro no válido')
+            elif kind == 'straighten':
+                if type(v) not in (float,int) or not math.isfinite(v) or abs(v)>15:raise ValueError('Enderezado no válido')
+                v=float(v)
+            elif type(v) is not bool:raise ValueError('Volteo no válido')
+            result['ops'].append({'kind':kind,'value':v})
     if 'turns' in value:
         if type(value['turns']) is not int or not 0 <= value['turns'] <= 3:
             raise ValueError('Giro no válido')
@@ -69,21 +89,49 @@ def _rotate90(im: Image.Image, turns: int) -> Image.Image:
                          3:Image.Transpose.ROTATE_90}[turns])
 
 
+def _geometry_operation(im: Image.Image, kind: str, value) -> Image.Image:
+    """Una operación SOBRE los píxeles existentes (nunca reconstruye lo descartado)."""
+    if kind == 'turn':return _rotate90(im, int(value))
+    if kind == 'flip_h':return ImageOps.mirror(im)
+    if kind == 'flip_v':return ImageOps.flip(im)
+    if kind == 'crop':
+        w,h=im.size
+        x0,y0,x1,y1=value
+        return im.crop((max(0,round(x0*w)),max(0,round(y0*h)),
+                        min(w,max(round(x0*w)+1,round(x1*w))),
+                        min(h,max(round(y0*h)+1,round(y1*h)))))
+    if kind == 'straighten':
+        return im.rotate(-float(value),expand=True,resample=Image.Resampling.BICUBIC,
+                         fillcolor=(255,255,255) if im.mode=='RGB' else 255)
+    raise ValueError('Operación desconocida')
+
+
+def legacy_to_operations(edits:dict|None)->dict:
+    """Normaliza viejos proyectos: los transforma en historial sin cambiar su imagen."""
+    spec=validate_edits(edits)
+    for kind,key in (('turn','turns'),('flip_h','flip_h'),('flip_v','flip_v'),('straighten','straighten'),('crop','crop')):
+        value=spec[key]
+        if value not in (None,0,False):
+            spec['ops'].append({'kind':kind,'value':value})
+            spec[key]=None if key=='crop' else False if key.startswith('flip') else 0
+    return spec
+
+
 def geometry_image(source: Image.Image, edits: dict | None) -> Image.Image:
-    """Giro, espejo y enderezado antes de definir el recorte proporcional."""
+    """Historial confirmado seguido de las operaciones nuevas sobre ese resultado."""
     spec = validate_edits(edits)
     image = source.copy()
-    if spec['turns']:
-        nxt = _rotate90(image, spec['turns']); image.close(); image = nxt
-    if spec['flip_h']:
-        nxt = ImageOps.mirror(image); image.close(); image = nxt
-    if spec['flip_v']:
-        nxt = ImageOps.flip(image); image.close(); image = nxt
-    if abs(spec['straighten']) >= 0.01:
-        nxt = image.rotate(-spec['straighten'], expand=True, resample=Image.Resampling.BICUBIC,
-                           fillcolor=(255,255,255) if image.mode == 'RGB' else 255)
-        image.close(); image = nxt
-    return image
+    try:
+        actions=list(spec['ops'])
+        actions.extend([{'kind':k,'value':v} for k,v in (
+            ('turn',spec['turns']),('flip_h',spec['flip_h']),
+            ('flip_v',spec['flip_v']),('straighten',spec['straighten'])) if v])
+        for op in actions:
+            nxt = _geometry_operation(image,op['kind'],op['value'])
+            image.close();image=nxt
+        return image
+    except Exception:
+        image.close();raise
 
 
 def crop_after_transform(crop, action):
@@ -194,15 +242,18 @@ def apply_edits(source: Image.Image, edits: dict | None) -> Image.Image:
 
 def transformed_dimensions(size: tuple[int,int], edits: dict | None) -> tuple[float,float]:
     spec = validate_edits(edits)
-    w,h = size
-    if spec['turns']%2:
-        w,h=h,w
-    angle=math.radians(spec['straighten'])
-    c,s=abs(math.cos(angle)),abs(math.sin(angle))
-    w,h=w*c+h*s,w*s+h*c
-    if spec['crop']:
-        x0,y0,x1,y1=spec['crop']
-        w*=x1-x0; h*=y1-y0
+    w,h=map(float,size)
+    def update(kind,val,w,h):
+        if kind=='turn' and int(val)%2:return h,w
+        if kind=='straighten':
+            a=math.radians(float(val));c,s=abs(math.cos(a)),abs(math.sin(a))
+            return w*c+h*s,w*s+h*c
+        if kind=='crop':return w*(val[2]-val[0]),h*(val[3]-val[1])
+        return w,h
+    for op in spec['ops']:
+        w,h=update(op['kind'],op['value'],w,h)
+    for kind,v in (('turn',spec['turns']),('straighten',spec['straighten']),('crop',spec['crop'])):
+        if v:w,h=update(kind,v,w,h)
     return w,h
 
 

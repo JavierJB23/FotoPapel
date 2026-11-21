@@ -662,7 +662,8 @@ def _render_free_sheet(paths: Sequence[Path],opts: ExportOptions,
             lowres|=min(usable[0]/sw,usable[1]/sh)>1.25
             # Rotar una capa transparente ya encajada: las esquinas fuera del
             # rectángulo no tapan otras fotos ni la hoja de fondo.
-            photo=ImageOps.contain(content,usable,Image.Resampling.LANCZOS).convert('RGBA')
+            photo=(content.resize(usable,Image.Resampling.LANCZOS) if spec.get('stretch',False)
+                   else ImageOps.contain(content,usable,Image.Resampling.LANCZOS)).convert('RGBA')
             try:
                 rotated=photo.rotate(-float(spec.get('angle',0.)),Image.Resampling.BICUBIC,expand=True)
                 try:

@@ -1,4 +1,4 @@
-"""Editor fotográfico visual de Revelo v1.6 (Tkinter, totalmente local)."""
+"""Editor fotográfico visual de Revelo (Tkinter, totalmente local)."""
 from __future__ import annotations
 
 import tkinter as tk
@@ -6,7 +6,7 @@ from tkinter import ttk
 from pathlib import Path
 from PIL import Image, ImageOps, ImageTk
 
-from photo_edits import DEFAULT, LIMITS, validate_edits, apply_edits, geometry_image, auto_white_crop, crop_after_transform, crop_after_straighten
+from photo_edits import DEFAULT, LIMITS, validate_edits, apply_edits, geometry_image, auto_white_crop, legacy_to_operations
 
 BG='#0B1422'; PANEL='#142236'; PANEL2='#1B2D43'; BORDER='#304660'; CREAM='#F6E5C4'
 ACCENT='#4CD9B5'; TEXT='#F2F7FC'; MUTED='#9FB6C9'
@@ -35,7 +35,7 @@ class PhotoEditor(tk.Toplevel):
         self.configure(bg=BG)
         self.path=Path(path)
         self.on_save=on_save
-        self.spec=validate_edits(saved)
+        self.spec=legacy_to_operations(saved)
         self._source: Image.Image | None=None
         self._geometry: Image.Image | None=None
         self._display_photo: ImageTk.PhotoImage | None=None
@@ -49,8 +49,8 @@ class PhotoEditor(tk.Toplevel):
         self._resize_start=None
         self._page_handle=(0,0)
         self._compare=False
-        self._result=False
-        self._confirmed_crop=tuple(self.spec['crop']) if self.spec['crop'] else None
+        self._result=bool(self.spec['ops']) and self.spec['crop'] is None
+        self._confirmed_crop=None
         self.crop_mode=tk.StringVar(value='Libre')
         self.status=tk.StringVar(value='Arrastra sobre la foto para recortar; también puedes mover las cuatro esquinas.')
         self.keep_ratio=tk.BooleanVar(value=True)
@@ -187,6 +187,8 @@ class PhotoEditor(tk.Toplevel):
         self.crop_btn=self._btn(top,'✂ Recortar',self._confirm_crop)
         self.crop_btn.pack(side='right',padx=(0,7))
         self._refresh_crop_button()
+        if self._result:
+            self.result_btn.configure(text='Modificar recorte')
         self.canvas=tk.Canvas(right,bg='#0E1929',highlightthickness=0,bd=0,cursor='crosshair')
         self.canvas.pack(fill='both',expand=True,pady=(10,5))
         self.canvas.bind('<Configure>',lambda _e:self._display())
@@ -198,30 +200,48 @@ class PhotoEditor(tk.Toplevel):
         self.help_note.pack(fill='x')
         tk.Label(self,textvariable=self.status,fg=ACCENT,bg=BG,font=('Segoe UI',10),anchor='w').pack(side='bottom',fill='x',padx=20)
         self._bind_wheel(inside)
+        self.scroll_canvas.bind('<MouseWheel>', self._wheel)
 
     def _range(self,inside,title,key,low,high,*,resolution):
+        """Rueda = desplazar opciones; escala + valor editable con retorno magnético al neutro."""
         box=tk.Frame(inside,bg=PANEL);box.pack(fill='x',pady=(3,6))
         line=tk.Frame(box,bg=PANEL);line.pack(fill='x')
         self._text(line,title,color=MUTED).pack(side='left')
-        variable=tk.DoubleVar(value=self.spec[key])
-        self._slider_vars[key]=variable
-        value=tk.Label(line,text=f'{variable.get():.1f}' if key=='straighten' else f'{variable.get():.2f}',fg=ACCENT,bg=PANEL,font=('Segoe UI',9,'bold'))
-        value.pack(side='right')
-        def updated(raw):
-            old_value=float(self.spec[key])
-            if key=='straighten' and self._source is not None and self.spec['crop']:
-                w,h=self._source.size
-                if self.spec['turns']%2:
-                    w,h=h,w
-                self.spec['crop']=crop_after_straighten(
-                    self.spec['crop'],(w,h),old_value,float(raw))
-                self._confirmed_crop=tuple(self.spec['crop'])
-            self.spec[key]=float(raw)
-            value.configure(text=f'{float(raw):.1f}' if key=='straighten' else f'{float(raw):.2f}')
+        variable=tk.DoubleVar(value=self.spec[key]);self._slider_vars[key]=variable
+        display=tk.StringVar(value=f'{variable.get():.1f}' if key=='straighten' else f'{variable.get():.2f}')
+        entry=tk.Entry(line,textvariable=display,width=6,fg=ACCENT,bg=PANEL2,insertbackground=TEXT,
+                       justify='right',relief='flat',font=('Segoe UI',10,'bold'))
+        entry.pack(side='right')
+        neutral=0.0 if key=='straighten' else 1.0
+        updating=[False]
+        def set_value(new):
+            if updating[0]:return
+            try:new=float(new)
+            except (ValueError,TypeError):return
+            new=max(low,min(high,new))
+            # Zona de atracción magnética de un paso de escala al valor original.
+            if abs(new-neutral)<=resolution*1.25:new=neutral
+            new=round(new,2)
+            if abs(new-float(self.spec[key]))<1e-7:
+                display.set(f'{new:.1f}' if key=='straighten' else f'{new:.2f}')
+                return
+            self.spec[key]=new
+            updating[0]=True;variable.set(new);updating[0]=False
+            display.set(f'{new:.1f}' if key=='straighten' else f'{new:.2f}')
+            if key=='print_scale' and not self._page_view and (self.paper_options is not None or self.cover_spec is not None):
+                self._toggle_page_view()
             self._schedule()
-        tk.Scale(box,from_=low,to=high,resolution=resolution,orient='horizontal',variable=variable,
-                 command=updated,showvalue=False,bg=PANEL,fg=TEXT,troughcolor='#28405A',
-                 highlightthickness=0,bd=0,activebackground=ACCENT,length=242).pack(fill='x')
+        slider=tk.Scale(box,from_=low,to=high,resolution=resolution,orient='horizontal',variable=variable,
+                 command=lambda v:set_value(v),showvalue=False,bg=PANEL,fg=TEXT,troughcolor='#28405A',
+                 highlightthickness=0,bd=0,activebackground=ACCENT,length=242)
+        slider.pack(fill='x')
+        variable.trace_add('write',lambda *_:set_value(variable.get()) if not updating[0] else None)
+        entry.bind('<Return>',lambda _e:(set_value(display.get()),self.focus_set()))
+        entry.bind('<FocusOut>',lambda _e:set_value(display.get()))
+        slider.bind('<Double-Button-1>',lambda _e:set_value(neutral))
+        # Incluso sobre el control nativo de Tk la rueda solo hace scroll.
+        slider.bind('<MouseWheel>',self._wheel)
+        entry.bind('<MouseWheel>',self._wheel)
 
     def _refresh_auto_button(self):
         if hasattr(self, 'auto_btn'):
@@ -500,16 +520,30 @@ class PhotoEditor(tk.Toplevel):
         else:self.status.set('No se ha detectado un marco blanco que pueda quitarse con seguridad.')
 
     def _transform(self,mode):
-        prior=self.spec['crop']
+        # Una selección pendiente de recorte se confirma primero: lo excluido
+        # deja de existir para TODAS las transformaciones posteriores.
+        self._commit_crop()
         if mode=='h':self.spec['flip_h']=not self.spec['flip_h']
         elif mode=='v':self.spec['flip_v']=not self.spec['flip_v']
         else:self.spec['turns']=(self.spec['turns']+mode)%4
-        self.spec['crop']=crop_after_transform(prior,mode)
-        self._confirmed_crop=tuple(self.spec['crop']) if self.spec['crop'] else None
+        self._result=True
         self._refresh_crop_button()
         self.crop_mode.set('Libre')
-        # Si estaba viendo el recorte confirmado, lo sigue viendo girado.
         self._render()
+
+    def _commit_crop(self):
+        box=self.spec.get('crop')
+        if box is None:return False
+        # Las transformaciones anteriores se registran ANTES del recorte.
+        self.spec=legacy_to_operations(self.spec)
+        self._confirmed_crop=None
+        self._result=True
+        self.result_btn.configure(text='Modificar recorte')
+        for name,var in self._slider_vars.items():
+            if name in self.spec and abs(float(var.get())-float(self.spec[name]))>.001:
+                var.set(self.spec[name])
+        self._refresh_crop_button()
+        return True
 
     def _refresh_crop_button(self):
         if not hasattr(self, 'crop_btn'):
@@ -523,17 +557,9 @@ class PhotoEditor(tk.Toplevel):
                                 cursor='hand2' if ready else 'arrow')
 
     def _confirm_crop(self):
-        if self.spec['crop'] is None:
-            return
-        crop = tuple(self.spec['crop'])
-        if crop == self._confirmed_crop:
-            return
-        self._confirmed_crop = crop
-        self._result=True
-        self.result_btn.configure(text='Modificar recorte')
-        self._refresh_crop_button()
-        self.status.set('Recorte aplicado en la vista. Es reversible: usa «Modificar recorte» o «Restablecer original».')
-        self._display()
+        if self._commit_crop():
+            self.status.set('Recorte confirmado. Los giros y ajustes actúan SOLO sobre esta imagen. «Restablecer original» recupera la fuente.')
+            self._render()
 
     def _toggle_result(self):
         self._result=not self._result
@@ -548,7 +574,7 @@ class PhotoEditor(tk.Toplevel):
             self._compare=False;self._display()
 
     def reset(self):
-        self.spec=dict(DEFAULT)
+        self.spec=validate_edits(None)
         self._refresh_auto_button()
         for key,var in self._slider_vars.items():var.set(self.spec[key])
         self.crop_mode.set('Libre')
@@ -561,6 +587,7 @@ class PhotoEditor(tk.Toplevel):
 
     def save(self):
         try:
+            self._commit_crop()
             spec=validate_edits(self.spec)
             self.on_save(spec)
         except Exception as exc:
