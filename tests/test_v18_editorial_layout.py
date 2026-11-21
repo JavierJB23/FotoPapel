@@ -20,8 +20,23 @@ def test_editorial_layout_keeps_work_areas_and_all_controls_visible(width, heigh
         assert len(panels) == 7
         assert len({panel.winfo_y() for panel in panels}) == 1
         assert panels[-1].winfo_rootx() + panels[-1].winfo_width() <= root.winfo_rootx() + width
-        # El área que el usuario necesita para ordenar no desaparece por el estilo.
-        assert app.order_area.winfo_height() >= (230 if height == 730 else 340)
+        # La máquina virtual de GitHub Actions para Windows puede disponer de
+        # una pantalla de solo 768 px de alto. Aunque pidamos una ventana de
+        # 845 o 900 px, Windows la limita al espacio visible; no debemos exigir
+        # 340 px de área interior en un escritorio físicamente más pequeño.
+        # Cuando la pantalla sí admite el tamaño solicitado, conservamos la
+        # comprobación exigente original de >=340 px.
+        available_height = min(root.winfo_height(), root.winfo_screenheight())
+        if available_height + 20 < height:
+            min_order = max(230, min(340, int(available_height * 0.35)))
+        else:
+            min_order = 230 if height == 730 else 340
+        actual_order = app.order_area.winfo_height()
+        assert actual_order >= min_order, (
+            f"Área de orden {actual_order}px (mínimo {min_order}px); "
+            f"ventana={root.winfo_width()}x{root.winfo_height()}, "
+            f"pantalla={root.winfo_screenwidth()}x{root.winfo_screenheight()}"
+        )
         assert app.library_area.winfo_height() >= 250
         for button in (app.add_btn, app.special_btn, app.mobile_btn, app.clear_btn,
                        app.layout_edit_btn, app.numbers_btn, app.reset_btn,
