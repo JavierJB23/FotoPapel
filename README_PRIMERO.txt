@@ -1,3 +1,66 @@
+REVELO v1.7.3 — ARRASTRE, ESCALA Y COMPOSICIÓN FIELES A LA IMPRESIÓN
+======================================================================
+
+ESTADO: CANDIDATA A STABLE. No sustituir todavía el respaldo
+Revelo v1.6.2 STABLE/FROZEN. El .exe se genera EN CARPETA (GitHub Actions).
+
+CORRECCIONES
+
+1. RECORTE Y GIROS
+   Al girar o reflejar una fotografía que ya has recortado, el área de
+   recorte se transforma con ella. El enderezado conserva una aproximación
+   de la zona seleccionada sin restablecer automáticamente la imagen entera.
+   «Modificar recorte» sigue permitiendo reajustarla.
+
+2. TAMAÑO DE FOTO VISIBLE
+   En «Editar fotografía» pulsa «Ver en hoja» para comprobar la escala real
+   respecto al papel; puedes cambiarla arrastrando el asa crema de la foto.
+   Funciona también con fotos de fondo de portadas personalizadas.
+   0,40 significa 40 % del tamaño de maquetación normal (no del archivo).
+
+3. TEXTO / PIE DE FOTO EN DIRECTO
+   Ventana con ajustes a la izquierda y la hoja completa a la derecha.
+   El texto, la tipografía, el color y el tamaño se actualizan en la vista.
+   También se puede estirar/reducir la foto por el asa aguamarina, sin
+   tener que fiarse exclusivamente del deslizador. Incluso un tamaño sin
+   texto se conserva en el proyecto .revelo y en PDF reversible.
+
+4. DISEÑO LIBRE MÁS INTUITIVO
+   El marco rodea la foto VISIBLE, no un rectángulo de destino vacío.
+   Arrastra su esquina para escalar, manteniendo proporciones. Un doble clic
+   coloca la fotografía seleccionada delante, guardando ese orden de capas.
+   Se incorpora «Fondo de la hoja»: Según encaje, Blanco, Crema,
+   Aguamarina, Azul noche, Difuminado o Personalizado (cualquier color).
+   La vista del editor y el PDF/Word siguen los mismos parámetros.
+
+5. PORTADAS PERSONALIZADAS
+   El control de escala del editor fotográfico modifica también el tamaño
+   de la imagen en el fondo de una portada. La fotografía se puede estirar
+   mediante un asa en el editor de portada, además de usar las barras.
+
+CONSERVACIÓN
+   Sin cambios destructivos sobre las fotografías originales; el orden de
+   capas y el fondo de diseño libre se guardan en .revelo y PDF reversible.
+   Los proyectos antiguos siguen abriéndose con valores predeterminados.
+
+INSTALACIÓN
+
+1. Descomprime «Revelo_v1_7_3_ACTUALIZACION.zip».
+2. Sube a GitHub TODOS los archivos del ZIP conservando la carpeta tests.
+3. Haz Commit changes.
+4. En Actions descarga «Revelo-Windows-CARPETA» al terminar la compilación.
+5. Descomprime y ejecuta Revelo.exe conservando sus archivos auxiliares.
+   NO modifiques .github/workflows/windows-exe.yml, ni necesitas Python.
+
+PRUEBA EN WINDOWS
+   - Recorta una foto, gírala 90° y observa el mismo encuadre.
+   - En una portada cambia escala 1,00 a 0,40 en «Ver en hoja».
+   - Abre un pie de foto y observa los textos y tamaño sobre el folio.
+   - En Diseño libre superpón dos fotos; doble clic cambia cuál va delante.
+   - Prueba fondo Crema y Difuminado. Exporta y revisa el PDF.
+
+--------------------------------------------------------------------
+
 REVELO v1.7.2 — DISEÑO LIBRE, TAMAÑOS Y NUMERACIÓN
 ====================================================
 

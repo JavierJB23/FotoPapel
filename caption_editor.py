@@ -9,12 +9,12 @@ from pathlib import Path
 from tkinter import ttk, colorchooser
 import tkinter as tk
 
-from PIL import Image, ImageTk
+from PIL import Image, ImageTk, ImageOps
 
 from advanced_layout import (CAPTION_PLACEMENTS, CAPTION_ALIGNMENTS,
                              validate_caption, draw_caption)
 from special_pages import FONT_CHOICES
-from processor import render_print_image, ExportOptions
+from processor import render_print_image, render_layout_page, page_groups, ExportOptions
 import revelo_dialogs as messages
 
 BG = '#0B1422'
@@ -147,14 +147,15 @@ def _edit_positions(parent: tk.Toplevel, path: Path, spec: dict, opts: ExportOpt
 
 
 def edit_caption(parent, path: Path, initial: dict | None,
-                 opts: ExportOptions, on_save):
+                 opts: ExportOptions, on_save, *, page_paths=None, page_index=0):
     spec=validate_caption(initial)
     dialog=tk.Toplevel(parent)
     dialog.title('Revelo · Texto y pie de foto')
     dialog.configure(bg=BG)
     height=min(735,max(550,dialog.winfo_screenheight()-105))
-    dialog.geometry(f'680x{height}')
-    dialog.minsize(510,490)
+    screen_w=max(850,dialog.winfo_screenwidth()-100)
+    dialog.geometry(f'{min(1190,screen_w)}x{height}')
+    dialog.minsize(790,490)
     title=tk.StringVar(value=spec.get('title',''))
     detail=tk.StringVar(value=spec.get('detail',''))
     placement=tk.StringVar(value=spec.get('placement','Debajo'))
@@ -177,8 +178,25 @@ def edit_caption(parent, path: Path, initial: dict | None,
              font=('Segoe UI',17,'bold')).pack(anchor='w')
     tk.Label(head,text='Texto transparente · Ajusta cada elemento a tu gusto.',
              bg=BG,fg=MUTED,font=('Segoe UI',10)).pack(anchor='w',pady=(4,0))
-    holder=tk.Frame(dialog,bg=SURFACE)
-    holder.pack(fill='both',expand=True,padx=20,pady=4)
+    content=tk.Frame(dialog,bg=BG)
+    content.pack(fill='both',expand=True,padx=20,pady=4)
+    holder=tk.Frame(content,bg=SURFACE,width=410)
+    holder.pack(side='left',fill='y',padx=(0,12))
+    holder.pack_propagate(False)
+    # Papel completo que se actualiza al escribir, elegir fuente/color y escalar.
+    view=tk.Frame(content,bg=SURFACE,padx=12,pady=12)
+    view.pack(side='left',fill='both',expand=True)
+    tk.Label(view,text='VISTA PREVIA DE LA HOJA · EN DIRECTO',font=('Segoe UI',11,'bold'),
+             fg=TEXT,bg=SURFACE,anchor='w').pack(fill='x',pady=(0,7))
+    tk.Label(view,text='Arrastra la esquina aguamarina para cambiar el tamaño de la foto.',
+             fg=MUTED,bg=SURFACE,font=('Segoe UI',9),anchor='w').pack(fill='x')
+    preview_canvas=tk.Canvas(view,bg='#0B1726',highlightthickness=0,cursor='crosshair')
+    preview_canvas.pack(fill='both',expand=True,pady=(8,2))
+    preview_image=[None]
+    preview_box=[0,0,1,1]
+    photo_handle=[0,0]
+    updating=[None]
+    dragging=[None]
     sc=tk.Canvas(holder,bg=SURFACE,highlightthickness=0)
     scroll=ttk.Scrollbar(holder,orient='vertical',command=sc.yview)
     sc.configure(yscrollcommand=scroll.set)
@@ -211,10 +229,12 @@ def edit_caption(parent, path: Path, initial: dict | None,
             color_box[0]=chosen.upper()
             button.configure(bg=chosen,activebackground=chosen,
                              fg='#101F2B' if sum(int(chosen[i:i+2],16) for i in (1,3,5))>380 else '#FFFFFF')
+            dialog.after_idle(schedule_preview)
 
     heading('TAMAÑO DE LA FOTOGRAFÍA EN LA HOJA')
     tk.Label(body,text='Reduce la foto para dejar espacio a los textos, sin recortar el original.',
-             bg=SURFACE,fg=MUTED,font=('Segoe UI',9)).pack(anchor='w')
+             bg=SURFACE,fg=MUTED,font=('Segoe UI',9),wraplength=335,
+             justify='left',anchor='w').pack(fill='x')
     scale_row=tk.Frame(body,bg=SURFACE)
     scale_row.pack(fill='x')
     tk.Scale(scale_row,from_=25,to=100,resolution=1,variable=photo_scale,orient='horizontal',
@@ -232,7 +252,8 @@ def edit_caption(parent, path: Path, initial: dict | None,
     heading('UBICACIÓN')
     place_combo=combo(placement,CAPTION_PLACEMENTS)
     tk.Label(body,text='Sin recuadros de fondo. En Personalizado puedes arrastrar ambos textos.',
-             bg=SURFACE,fg=MUTED,font=('Segoe UI',9),anchor='w').pack(fill='x',pady=(5,0))
+             bg=SURFACE,fg=MUTED,font=('Segoe UI',9),anchor='w',wraplength=335,
+             justify='left').pack(fill='x',pady=(5,0))
 
     def style_group(text,font_var,size_var,color_box,label):
         heading(text)
@@ -279,7 +300,10 @@ def edit_caption(parent, path: Path, initial: dict | None,
             messages.showwarning('Texto y pie de foto','Escribe primero un título o una descripción.',parent=dialog)
             return
         dialog.grab_release()
-        _edit_positions(dialog,path,data,opts,lambda updated:positions.update(updated))
+        def saved_pos(updated):
+            positions.update(updated)
+            schedule_preview()
+        _edit_positions(dialog,path,data,opts,saved_pos)
 
     def update_custom_button(*_):
         custom_btn.configure(state='normal' if placement.get()=='Personalizado' else 'disabled')
@@ -294,6 +318,124 @@ def edit_caption(parent, path: Path, initial: dict | None,
     placement.trace_add('write',update_custom_button)
     update_custom_button()
     place_combo.bind('<<ComboboxSelected>>',lambda _ev:dialog.after(120,open_positions) if placement.get()=='Personalizado' else None)
+
+    def preview_spec():
+        try:
+            data={'title':title.get(),'detail':detail_input.get('1.0','end-1c'),
+                'placement':placement.get(),'title_font':title_font.get(),
+                'detail_font':detail_font.get(),'title_size':int(title_size.get()),
+                'detail_size':int(detail_size.get()),'title_color':title_color[0],
+                'detail_color':detail_color[0],'align':alignment.get(),
+                'photo_scale':round(photo_scale.get()/100,4),**positions}
+            return validate_caption(data)
+        except (ValueError,TypeError,tk.TclError):
+            return None
+
+    def redraw_preview():
+        updating[0]=None
+        if not dialog.winfo_exists():return
+        pw,ph=preview_canvas.winfo_width(),preview_canvas.winfo_height()
+        if pw<80 or ph<80:return
+        spec_now=preview_spec()
+        if spec_now is None:return
+        from dataclasses import replace
+        group=tuple(page_paths or (path,))
+        caps=dict(opts.captions)
+        caps[path]=spec_now
+        new_opts=replace(opts,captions=caps)
+        try:
+            img,(wmm,hmm),_=render_layout_page(group,new_opts,
+                preview_max_size=(min(850,max(100,pw-24)),min(780,max(100,ph-24))),
+                page_index=page_index)
+        except Exception:
+            return
+        try:
+            # El lienzo es el documento REAL, no una foto aislada del fondo.
+            preview_image[0]=ImageTk.PhotoImage(img)
+            xx=(pw-img.width)//2;yy=(ph-img.height)//2
+            preview_box[:]=[xx,yy,img.width,img.height]
+            preview_canvas.delete('all')
+            preview_canvas.create_rectangle(xx+5,yy+6,xx+img.width+5,yy+img.height+6,
+                                            fill='#06111D',outline='')
+            preview_canvas.create_image(xx,yy,anchor='nw',image=preview_image[0])
+            # Marco de ajuste: representa el área de fotografía (no de texto)
+            # y sirve para modificar la escala sin mover una barra numérica.
+            from processor import printable_box, _prepared_photo
+            from advanced_layout import template_rects,footer_height_px
+            from layout_editor import editable_template_rects
+            if path in group:
+                idx=group.index(path)
+                zone=printable_box(img.size,(wmm,hmm),binding=opts.binding,page_index=page_index)
+                zx,zy,zr,zb=zone
+                if len(group)==1:
+                    cell=zone
+                elif new_opts.layout_template!='Cuadrícula' and len(group)==3 and new_opts.photos_per_page==3:
+                    gap=max(1,round(img.width*3/wmm))
+                    cell=editable_template_rects(zone,gap,gap,new_opts.layout_template,
+                        new_opts.layout_items.get(group[0],{}))[idx]
+                else:
+                    from processor import _grid_shape
+                    cols,_=_grid_shape(new_opts.photos_per_page,wmm>hmm)
+                    gap=max(1,round(img.width*3/wmm))
+                    cell=template_rects(zone,gap,gap,template='Cuadrícula',
+                                      count=new_opts.photos_per_page,landscape=wmm>hmm)[idx]
+                x0,y0,x1,y1=cell
+                cell_w=x1-x0;cell_h=y1-y0
+                foot=footer_height_px(cell_h,img.width/wmm,spec_now)
+                cw=max(1,cell_w*photo_scale.get()/100)
+                ch=max(1,(cell_h-foot)*photo_scale.get()/100)
+                try:
+                    from photo_edits import transformed_dimensions
+                    with Image.open(path) as original:
+                        source_w,source_h=original.size
+                        if original.getexif().get(274) in (5,6,7,8):
+                            source_w,source_h=source_h,source_w
+                    sw,sh=transformed_dimensions((source_w,source_h),
+                                                 opts.photo_edits.get(path))
+                    ratio=min(cw/max(1,sw),ch/max(1,sh))
+                    ww=sw*ratio;hh=sh*ratio
+                except Exception:
+                    ww=cw;hh=ch
+                center_x=(x0+x1)/2
+                center_y=(y0+(y1-foot))/2
+                left=xx+center_x-ww/2;top=yy+center_y-hh/2
+                right=left+ww;bottom=top+hh
+                photo_handle[:]=[right,bottom]
+                preview_canvas.create_rectangle(left,top,right,bottom,outline=ACCENT,width=2)
+                preview_canvas.create_rectangle(right-7,bottom-7,right+7,bottom+7,
+                                               fill=ACCENT,outline=BG,width=2)
+        finally:
+            img.close()
+
+    def schedule_preview(*_):
+        if updating[0] is not None:
+            dialog.after_cancel(updating[0])
+        updating[0]=dialog.after(110,redraw_preview)
+
+    # Click y arrastre de la esquina de la foto. Es un control adicional a la
+    # barra, que permanece por compatibilidad con proyectos anteriores.
+    def photo_press(event):
+        if abs(event.x-photo_handle[0])<=19 and abs(event.y-photo_handle[1])<=19:
+            dragging[0]=(event.x,event.y,photo_scale.get())
+
+    def photo_move(event):
+        if dragging[0] is None:return
+        xx,yy,starting=dragging[0]
+        delta=max(event.x-xx,event.y-yy)
+        width=max(100,preview_box[2])
+        photo_scale.set(round(max(25,min(100,starting+delta*100/width))))
+
+    def photo_release(_event):dragging[0]=None
+    preview_canvas.bind('<ButtonPress-1>',photo_press)
+    preview_canvas.bind('<B1-Motion>',photo_move)
+    preview_canvas.bind('<ButtonRelease-1>',photo_release)
+    preview_canvas.bind('<Configure>',schedule_preview)
+    for var in (title,placement,alignment,title_font,detail_font,title_size,detail_size,photo_scale):
+        var.trace_add('write',schedule_preview)
+    detail_input.bind('<KeyRelease>',schedule_preview)
+    detail_input.bind('<FocusOut>',schedule_preview)
+    # Colorchooser llama a schedule_preview directamente después de la selección.
+    dialog.after(180,schedule_preview)
 
     # El scroll vertical es del formulario, nunca de los combobox ni spinbox.
     def scroll_panel(ev):
@@ -314,6 +456,8 @@ def edit_caption(parent, path: Path, initial: dict | None,
             if clean is None:
                 return
             on_save(clean)
+        if updating[0] is not None:
+            dialog.after_cancel(updating[0]);updating[0]=None
         try:dialog.grab_release()
         except tk.TclError:pass
         dialog.destroy()

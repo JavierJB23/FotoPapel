@@ -86,6 +86,66 @@ def geometry_image(source: Image.Image, edits: dict | None) -> Image.Image:
     return image
 
 
+def crop_after_transform(crop, action):
+    """Traslada el recorte visible al girar o reflejar la imagen completa.
+
+    Coordenadas normalizadas; los cuatro vértices se transforman en conjunto
+    para que el mismo contenido siga seleccionado después del giro.
+    """
+    if crop is None:
+        return None
+    x0, y0, x1, y1 = crop
+    pts = ((x0, y0), (x1, y0), (x0, y1), (x1, y1))
+    if action in (1, 'cw'):
+        points = [(1-y, x) for x, y in pts]
+    elif action in (-1, 'ccw'):
+        points = [(y, 1-x) for x, y in pts]
+    elif action == 'h':
+        points = [(1-x, y) for x, y in pts]
+    elif action == 'v':
+        points = [(x, 1-y) for x, y in pts]
+    else:
+        return list(crop)
+    return [round(min(x for x,_ in points), 6),round(min(y for _,y in points), 6),
+            round(max(x for x,_ in points), 6),round(max(y for _,y in points), 6)]
+
+
+def crop_after_straighten(crop, base_size, old_angle, new_angle):
+    """Conserva la misma región elegida al modificar el enderezado.
+
+    Transforma los vértices desde el lienzo expandido de la rotación antigua
+    al de la nueva. No descarta el recorte ni vuelve a la imagen completa.
+    """
+    if crop is None or abs(new_angle-old_angle)<1e-7:
+        return list(crop) if crop else None
+    import math
+    w,h=base_size
+    def dims(angle):
+        a=math.radians(angle)
+        return (abs(w*math.cos(a))+abs(h*math.sin(a)),
+                abs(h*math.cos(a))+abs(w*math.sin(a)))
+    old_w,old_h=dims(old_angle)
+    new_w,new_h=dims(new_angle)
+    x0,y0,x1,y1=crop
+    points=[]
+    def rotate(x,y,a):
+        angle=math.radians(a)
+        return (x*math.cos(angle)-y*math.sin(angle),
+                x*math.sin(angle)+y*math.cos(angle))
+    for nx,ny in ((x0,y0),(x1,y0),(x0,y1),(x1,y1)):
+        oldx=(nx-.5)*old_w
+        oldy=(ny-.5)*old_h
+        originx,originy=rotate(oldx,oldy,-old_angle)
+        nextx,nexty=rotate(originx,originy,new_angle)
+        points.append((max(0,min(1,.5+nextx/new_w)),
+                       max(0,min(1,.5+nexty/new_h))))
+    result=[min(pt[0] for pt in points),min(pt[1] for pt in points),
+            max(pt[0] for pt in points),max(pt[1] for pt in points)]
+    if result[2]-result[0]<.005 or result[3]-result[1]<.005:
+        return list(crop)
+    return [round(v,6) for v in result]
+
+
 def automatic_photo_correction(source: Image.Image) -> Image.Image:
     """Mejora fotográfica moderada y determinista, sin IA ni servicios externos.
 

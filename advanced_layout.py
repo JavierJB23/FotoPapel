@@ -71,7 +71,10 @@ def validate_caption(spec: dict | None) -> dict:
 
 
 def has_caption(spec: dict | None) -> bool:
-    return bool(spec and (spec.get("title") or spec.get("detail")))
+    # La escala de la fotografía también es una modificación reversible,
+    # aunque todavía no se haya escrito un pie de foto.
+    return bool(spec and (spec.get("title") or spec.get("detail") or
+                          abs(float(spec.get('photo_scale',1.0))-1.0)>0.001))
 
 
 def template_rects(box: tuple[int, int, int, int], gap_x: int, gap_y: int,
@@ -193,7 +196,7 @@ def _wrap_text(draw: ImageDraw.ImageDraw, text: str, font, width: int, max_lines
 
 
 def footer_height_px(cell_height: int, px_per_mm: float, spec: dict | None) -> int:
-    if not has_caption(spec) or spec.get("placement") != "Debajo":
+    if not spec or not (spec.get('title') or spec.get('detail')) or spec.get("placement") != "Debajo":
         return 0
     has_two = bool(spec.get('title')) and bool(spec.get('detail'))
     title_size = _px_size(spec, 'title_size', px_per_mm, max(20, cell_height))
@@ -232,7 +235,7 @@ def draw_caption(sheet: Image.Image, rect: tuple[int,int,int,int], spec: dict | 
                  *, mode: str, px_per_mm: float,
                  below_start_y: int | None = None) -> None:
     """Texto sin paneles opacos, dentro de su celda y sin invadir otras fotos."""
-    if not has_caption(spec):
+    if not spec or not (spec.get('title') or spec.get('detail')):
         return
     x0,y0,x1,y1 = rect
     w,h = x1-x0,y1-y0

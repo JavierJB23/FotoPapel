@@ -235,6 +235,7 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
     setting_traces: list[tuple[tk.Variable, str]] = []
     canvas_box = [0, 0, 1, 1]
     image_drag = [None]
+    image_handle = [(0,0)]
     drag_text = [None]
     # Las guías sólo aparecen durante el arrastre. Su ajuste magnético tiene
     # histéresis (22 px) para evitar saltar al pasar lentamente por un eje.
@@ -304,7 +305,8 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
         def saved(edits):
             background_edits[0] = validate_edits(edits)
             schedule()
-        edit_photo(window, Path(photo_path), background_edits[0], saved)
+        edit_photo(window, Path(photo_path), background_edits[0], saved,
+                   cover_spec=draft(), paper_mm=physical_mm)
 
     # La selección de foto va inmediatamente debajo de Fondo, antes de la paleta.
     row_image = tk.Frame(left, bg=SURFACE)
@@ -591,6 +593,18 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
             active_label = {'title':'TÍTULO','subtitle':'SUBTÍTULO','image':'FOTOGRAFÍA'}[label_key]
             canvas.create_text(ox+9,oy+12,text=active_label,fill=ACCENT,
                                anchor='w',font=('Segoe UI',8,'bold'))
+            if label_key=='image' and fields['background_type'].get()=='imagen' and source_cache[1] is not None:
+                ww,hh=_image_extent()
+                cx=float(fields['image_x'].get()) if fields['image_mode'].get()=='Libre' else .5
+                cy=float(fields['image_y'].get()) if fields['image_mode'].get()=='Libre' else .5
+                a=ox+iw*(cx-ww/2);b=oy+ih*(cy-hh/2)
+                c=ox+iw*(cx+ww/2);d=oy+ih*(cy+hh/2)
+                # Marco alrededor de la FOTO, nunca alrededor de un espacio vacío.
+                canvas.create_rectangle(a,b,c,d,outline=ACCENT,width=2,dash=(5,3))
+                ax=max(ox+8,min(ox+iw-8,c));ay=max(oy+8,min(oy+ih-8,d))
+                image_handle[0]=(ax,ay)
+                canvas.create_rectangle(ax-7,ay-7,ax+7,ay+7,
+                                        fill=ACCENT,outline=BG,width=2)
             # Guías inteligentes visibles SOLO al alinear o arrastrar.
             if alignment[0] is not None or alignment[1] is not None:
                 gx0, gy0, gx1, gy1 = (0,0,iw,ih) if label_key == 'image' else safe
@@ -635,15 +649,34 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
         _, _, iw, ih = canvas_box
         if min(iw, ih, source.width, source.height) <= 0:
             return (1.0, 1.0)
-        contain = min(iw/source.width, ih/source.height)
-        return (source.width * contain * fields['image_zoom_x'].get() / iw,
-                source.height * contain * fields['image_zoom_y'].get() / ih)
+        mode=fields['image_mode'].get()
+        contain=(max(iw/source.width,ih/source.height) if mode=='Cubrir' else
+                 min(iw/source.width, ih/source.height))
+        scale=float(background_edits[0].get('print_scale',1.0))
+        return (source.width * contain * (fields['image_zoom_x'].get() if mode=='Libre' else 1.0)*scale/iw,
+                source.height * contain * (fields['image_zoom_y'].get() if mode=='Libre' else 1.0)*scale/ih)
 
     def begin_drag(event):
         if guide_hide_job[0] is not None:
             window.after_cancel(guide_hide_job[0])
             guide_hide_job[0] = None
         alignment[:] = [None, None]
+        if focused.get()=='image' and fields['background_type'].get()=='imagen':
+            hx,hy=image_handle[0]
+            if abs(event.x-hx)<=20 and abs(event.y-hy)<=20:
+                ox,oy,iw,ih=canvas_box
+                if fields['image_mode'].get()!='Libre' and source_cache[1] is not None:
+                    photo=source_cache[1]
+                    contain=min(iw/photo.width,ih/photo.height)
+                    basis=(max(iw/photo.width,ih/photo.height) if fields['image_mode'].get()=='Cubrir'
+                           else contain)
+                    initial=min(3.0,basis/contain)
+                    fields['image_mode'].set('Libre')
+                    fields['image_zoom_x'].set(initial)
+                    fields['image_zoom_y'].set(initial)
+                image_drag[0]=(event.x,event.y,float(fields['image_zoom_x'].get()),
+                               float(fields['image_zoom_y'].get()))
+                return
         on_drag(event)
 
     def on_drag(event):
@@ -653,6 +686,16 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
             return
         if key == 'image':
             if fields['background_type'].get() != 'imagen':
+                return
+            if image_drag[0] is not None:
+                sx,sy,scale_x,scale_y=image_drag[0]
+                # Arrastrar la esquina conserva proporciones si están enlazadas.
+                delta=max((event.x-sx)/max(1,iw),(event.y-sy)/max(1,ih))
+                next_x=max(.25,min(3.0,scale_x+delta*2))
+                next_y=max(.25,min(3.0,scale_y+delta*2))
+                fields['image_zoom_x'].set(round(next_x,3))
+                fields['image_zoom_y'].set(round(next_x if linked_scale.get() else next_y,3))
+                schedule()
                 return
             # Las fotos se mueven por su centro; los bordes reales también
             # tienen anclajes cuando la fotografía es menor que la hoja.
@@ -679,6 +722,7 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
         schedule()
 
     def finish_drag(_event=None):
+        image_drag[0]=None
         # La guía permanece un instante, para que el usuario perciba que el
         # centro ha encajado, y desaparece al soltar.
         if guide_hide_job[0] is not None:

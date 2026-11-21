@@ -670,7 +670,8 @@ class ReveloApp:
                 self._show_preview_page()
             self.feedback.set(f"Edición guardada para «{self.path_labels.get(path, path.name)}». Original intacto.")
         self.photo_editor_window = edit_photo(self.root, path, self.photo_edits.get(path), save_edits,
-                                              pdf_flattened=path in self.pdf_origins)
+                                              pdf_flattened=path in self.pdf_origins,
+                                              paper_options=self._options())
 
     def add_photos(self):
         if self.is_busy:
@@ -705,7 +706,11 @@ class ReveloApp:
                 self._show_preview_page()
             self.feedback.set('Pie de foto actualizado. La fotografía original no se modifica.')
 
-        edit_caption(self.root, path, original, self._options(), save)
+        groups=self._groups()
+        group=next((g for g in groups if path in g),(path,))
+        group_idx=next((i for i,g in enumerate(groups) if path in g),0)
+        edit_caption(self.root, path, original, self._options(), save,
+                     page_paths=group, page_index=group_idx)
 
     def numbering_dialog(self):
         """Numeración opcional, independiente del orden físico de encuadernación."""

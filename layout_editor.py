@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, colorchooser
 from PIL import Image, ImageOps, ImageTk, ImageDraw
 from advanced_layout import template_rects
 
@@ -37,6 +37,22 @@ def validate_layout_item(spec: dict | None) -> dict:
         if isinstance(angle,bool) or not isinstance(angle,(int,float)) or not -180<=angle<=180:
             raise ValueError('Rotación libre incorrecta')
         out['angle']=round(float(angle),3)
+    if 'z' in spec:
+        z=spec['z']
+        if type(z) is not int or not 0 <= z <= 10000:
+            raise ValueError('Orden de superposición incorrecto')
+        out['z']=z
+    if 'background' in spec:
+        allowed=('Según encaje','Blanco','Crema','Aguamarina','Azul noche','Difuminado','Personalizado')
+        if spec['background'] not in allowed:
+            raise ValueError('Fondo de composición desconocido')
+        out['background']=spec['background']
+    if 'background_color' in spec:
+        import re
+        val=spec['background_color']
+        if not isinstance(val,str) or not re.fullmatch(r'#[0-9a-fA-F]{6}',val):
+            raise ValueError('Color de composición no válido')
+        out['background_color']=val.upper()
     for name in ('split_main','split_small'):
         if name in spec:
             val=spec[name]
@@ -56,6 +72,28 @@ def free_default(index:int,count:int)->dict:
     cx=.08+(col+.5)*(.84/cols)
     cy=.08+(row+.5)*(.84/rows)
     return {'rect':[round(cx,4),round(cy,4),round(width,4),round(height,4)], 'angle':0.0}
+
+
+def visible_photo_geometry(zone, bounds, image_size, angle=0.0):
+    """La selección rodea SOLO la fotografía renderizada, no su celda vacía.
+
+    Devuelve rectángulo real sin girar y rectángulo exterior tras el giro.
+    """
+    from math import radians, cos, sin
+    x0,y0,x1,y1=zone
+    cx,cy,rw,rh=bounds
+    width=max(10,round((x1-x0)*rw))
+    height=max(10,round((y1-y0)*rh))
+    sw,sh=image_size
+    ratio=min(width/max(1,sw),height/max(1,sh))
+    iw=max(1,round(sw*ratio));ih=max(1,round(sh*ratio))
+    px=round(x0+(x1-x0)*cx);py=round(y0+(y1-y0)*cy)
+    photo=(px-iw//2,py-ih//2,px+(iw+1)//2,py+(ih+1)//2)
+    a=radians(angle)
+    extw=round(abs(iw*cos(a))+abs(ih*sin(a)))
+    exth=round(abs(iw*sin(a))+abs(ih*cos(a)))
+    outer=(px-extw//2,py-exth//2,px+(extw+1)//2,py+(exth+1)//2)
+    return photo,outer
 
 
 def editable_template_rects(box, gap_x, gap_y, template, params):
@@ -78,6 +116,29 @@ def editable_template_rects(box, gap_x, gap_y, template, params):
         cut_x=x0+round((width-gap_x)*minor)
         return [(x0,y0,cut_x,cut_y),(cut_x+gap_x,y0,x1,cut_y),(x0,cut_y+gap_y,x1,y1)]
     return template_rects(box,gap_x,gap_y,template='Cuadrícula',count=3,landscape=width>height)
+
+
+LAYOUT_BACKGROUNDS={
+    'Blanco':'#FFFFFF', 'Crema':'#F6EBDC',
+    'Aguamarina':'#DDF8EF', 'Azul noche':'#0B1928',
+}
+
+
+def free_sheet_background(paths, opts, size, background='Según encaje', custom='#FFFFFF',
+                          *, first_source=None):
+    """El mismo fondo en editor, previsualización, PDF y Word."""
+    from processor import _extended_background, _prepared_photo
+    if background == 'Difuminado' or (background == 'Según encaje' and
+                                       opts.fit == 'Ampliar fondo (sin recortar)'):
+        opened=None
+        if first_source is None:
+            opened,_=_prepared_photo(paths[0],opts)
+        try:
+            return _extended_background(first_source if first_source is not None else opened,size)
+        finally:
+            if opened is not None:opened.close()
+    color = custom if background=='Personalizado' else LAYOUT_BACKGROUNDS.get(background,'#FFFFFF')
+    return Image.new('RGB',size,color)
 
 
 def _btn(parent,label,callback,accent=False):
@@ -104,6 +165,10 @@ def edit_sheet(parent,paths:list[Path],template:str,initial:dict[Path,dict],
     if is_free:
         for i,p in enumerate(paths):
             if 'rect' not in state[p]:state[p]={**state[p],**free_default(i,len(paths))}
+            state[p].setdefault('z',i)
+    bg_spec=state[paths[0]]
+    background=tk.StringVar(value=bg_spec.get('background','Según encaje'))
+    custom_color=[bg_spec.get('background_color','#FFFFFF')]
     ratios={key:float(state[paths[0]].get(key,.4 if key=='split_main' and template=='2 arriba + grande abajo' else .6 if key=='split_main' else .5))
             for key in ('split_main','split_small')}
     dialog=tk.Toplevel(parent)
@@ -114,7 +179,7 @@ def edit_sheet(parent,paths:list[Path],template:str,initial:dict[Path,dict],
     tk.Label(dialog,text='TAMAÑO DE FOTOGRAFÍAS' if not is_free else 'COMPOSICIÓN LIBRE',
              font=('Segoe UI',17,'bold'),fg='white',bg=NAVY).pack(anchor='w',padx=20,pady=(17,4))
     guide=('Haz clic en una fotografía para seleccionarla. Usa la barra para modificar su espacio.' if not is_free
-           else 'Arrastra para mover · Arrastra la esquina aguamarina para escalar · Rueda: tamaño · Shift + rueda: giro.')
+           else 'Arrastra para mover o escalar la foto real · Doble clic: traer delante · Rueda: tamaño · Shift + rueda: giro.')
     tk.Label(dialog,text=guide,bg=NAVY,fg=MUTED,font=('Segoe UI',10)).pack(anchor='w',padx=20,pady=(0,11))
     toolbar=tk.Frame(dialog,bg=PANEL,padx=15,pady=10)
     toolbar.pack(fill='x',padx=18)
@@ -138,6 +203,28 @@ def edit_sheet(parent,paths:list[Path],template:str,initial:dict[Path,dict],
     angle_slider.pack(side='left')
     if not is_free:
         angle_label.pack_forget();angle_slider.pack_forget()
+    if is_free:
+        bg_row=tk.Frame(dialog,bg=PANEL,padx=15,pady=7)
+        bg_row.pack(fill='x',padx=18,pady=(7,0))
+        tk.Label(bg_row,text='Fondo de la hoja',bg=PANEL,fg='white',
+                 font=('Segoe UI',10,'bold')).pack(side='left',padx=(0,10))
+        bg_combo=ttk.Combobox(bg_row,textvariable=background,state='readonly',width=22,
+            values=('Según encaje','Blanco','Crema','Aguamarina','Azul noche','Difuminado','Personalizado'))
+        bg_combo.pack(side='left')
+        color_btn=_btn(bg_row,'Elegir color…',lambda:None)
+        color_btn.pack(side='left',padx=9)
+        def choose_free_color():
+            chosen=colorchooser.askcolor(color=custom_color[0],parent=dialog,
+                                          title='Color de la composición')[1]
+            if chosen:
+                custom_color[0]=chosen.upper();background.set('Personalizado')
+                draw()
+        color_btn.configure(command=choose_free_color)
+        def change_bg(_=None):
+            color_btn.configure(state='normal' if background.get()=='Personalizado' else 'disabled')
+            draw()
+        bg_combo.bind('<<ComboboxSelected>>',change_bg)
+        color_btn.configure(state='normal' if background.get()=='Personalizado' else 'disabled')
     canvas=tk.Canvas(dialog,bg='#1B2F47',highlightthickness=0)
     canvas.pack(fill='both',expand=True,padx=18,pady=(12,6))
     info=tk.StringVar(value='Cada foto conservará su proporción y el orden del documento.')
@@ -150,6 +237,7 @@ def edit_sheet(parent,paths:list[Path],template:str,initial:dict[Path,dict],
         photo.thumbnail((760,760),Image.Resampling.LANCZOS)
         thumbs.append(photo)
     photos=[]
+    sheet_photo=[None]
     geometry=[None]*len(paths)
     page=[0,0,1,1]
     safe_frame=[0,0,1,1]
@@ -176,7 +264,17 @@ def edit_sheet(parent,paths:list[Path],template:str,initial:dict[Path,dict],
         canvas.delete('all')
         photos.clear()
         canvas.create_rectangle(x+6,y+7,x+w+6,y+h+7,fill='#0A111D',outline='')
-        canvas.create_rectangle(x,y,x+w,y+h,fill='white',outline=AQUA,width=2)
+        # Igual que el motor de salida: el fondo seleccionado cubre toda la hoja.
+        if is_free:
+            base=free_sheet_background(paths,opts,(w,h),background.get(),custom_color[0],
+                                        first_source=thumbs[0])
+            try:
+                sheet_photo[0]=ImageTk.PhotoImage(base)
+                canvas.create_image(x,y,image=sheet_photo[0],anchor='nw')
+            finally:base.close()
+        else:
+            canvas.create_rectangle(x,y,x+w,y+h,fill='white',outline='',width=0)
+        canvas.create_rectangle(x,y,x+w,y+h,outline=AQUA,width=2)
         from processor import printable_box
         if opts.binding:
             sx,sy,sr,sb=printable_box((w,h),(wmm,hmm),binding=True,page_index=page_index)
@@ -189,18 +287,26 @@ def edit_sheet(parent,paths:list[Path],template:str,initial:dict[Path,dict],
         if not is_free:
             gap=max(2,round(min(w,h)*.014))
             rects=editable_template_rects(zone,gap,gap,template,ratios)
-        for i,img in enumerate(thumbs):
+        # El número z decide qué fotografía aparece DELANTE. No depende del
+        # orden en que fueron movidas por última vez.
+        indices=(sorted(range(len(thumbs)),key=lambda i:(state[paths[i]].get('z',i),i))
+                 if is_free else range(len(thumbs)))
+        for i in indices:
+            img=thumbs[i]
             if is_free:
-                cx,cy,rw,rh=state[paths[i]]['rect'];deg=state[paths[i]].get('angle',0.0)
-                bx=round(zx+zw*cx);by=round(zy+zh*cy)
-                target_w=max(12,round(zw*rw));target_h=max(12,round(zh*rh))
-                left=bx-target_w//2;top=by-target_h//2
-                rect=(left,top,left+target_w,top+target_h)
+                bounds=state[paths[i]]['rect'];deg=state[paths[i]].get('angle',0.0)
+                cap=opts.captions.get(paths[i],{})
+                scale=float(cap.get('photo_scale',1.0))*float(opts.photo_edits.get(paths[i],{}).get('print_scale',1.0))
+                scaled_bounds=[bounds[0],bounds[1],bounds[2]*scale,bounds[3]*scale]
+                unrotated,rect=visible_photo_geometry(zone,scaled_bounds,img.size,deg)
             else:
-                rect=rects[i];deg=0
+                rect=rects[i];unrotated=rect;deg=0.0
             geometry[i]=rect
             l,t,r,b=rect
-            iw=max(10,r-l);ih=max(10,b-t)
+            if is_free:
+                iw=max(1,unrotated[2]-unrotated[0]);ih=max(1,unrotated[3]-unrotated[1])
+            else:
+                iw=max(10,r-l);ih=max(10,b-t)
             fitted=ImageOps.contain(img,(iw,ih),Image.Resampling.BILINEAR)
             if is_free and abs(deg)>0.5:
                 with_alpha=fitted.convert('RGBA')
@@ -208,7 +314,9 @@ def edit_sheet(parent,paths:list[Path],template:str,initial:dict[Path,dict],
                 fitted=with_alpha.rotate(-deg,Image.Resampling.BICUBIC,expand=True)
             rendered=ImageTk.PhotoImage(fitted)
             photos.append(rendered)
-            canvas.create_image((l+r)//2,(t+b)//2,image=rendered,anchor='center')
+            cx=(unrotated[0]+unrotated[2])//2
+            cy=(unrotated[1]+unrotated[3])//2
+            canvas.create_image(cx,cy,image=rendered,anchor='center')
             fitted.close()
             color=AQUA if i==selected.get() else '#9BB4C7'
             canvas.create_rectangle(l,t,r,b,outline=color,width=2 if i==selected.get() else 1,
@@ -260,7 +368,8 @@ def edit_sheet(parent,paths:list[Path],template:str,initial:dict[Path,dict],
             draw()
 
     def hit_test(mx,my):
-        for i in range(len(paths)-1,-1,-1):
+        order=sorted(range(len(paths)),key=lambda i:(state[paths[i]].get('z',i),i),reverse=True) if is_free else range(len(paths)-1,-1,-1)
+        for i in order:
             rect=geometry[i]
             if rect and rect[0]<=mx<=rect[2] and rect[1]<=my<=rect[3]:return i
         return None
@@ -283,7 +392,11 @@ def edit_sheet(parent,paths:list[Path],template:str,initial:dict[Path,dict],
         dx=(event.x-drag['start'][0])/aw;dy=(event.y-drag['start'][1])/ah
         cx,cy,rw,rh=drag['initial']
         if drag['mode']=='resize':
-            rw=max(.05,min(1.5,rw+dx*2));rh=max(.05,min(1.5,rh+dy*2))
+            # Una sola esquina, igual que Word: mantiene proporciones y
+            # aumenta/reduce la foto visible, no una celda invisible.
+            factor=max(.15,min(4.0,1+max(dx/max(.04,rw),dy/max(.04,rh))))
+            factor=min(factor,1.5/max(rw,rh))
+            rw=max(.05,min(1.5,rw*factor));rh=max(.05,min(1.5,rh*factor))
         elif drag['mode']=='move':
             cx=max(0,min(1,cx+dx));cy=max(0,min(1,cy+dy))
             if abs(cx-.5)<.012:cx=.5
@@ -294,6 +407,21 @@ def edit_sheet(parent,paths:list[Path],template:str,initial:dict[Path,dict],
             l,t,pw,ph=page
             if cx==.5:canvas.create_line(l+pw/2,t,l+pw/2,t+ph,fill=AQUA,width=2,dash=(4,4))
             if cy==.5:canvas.create_line(l,t+ph/2,l+pw,t+ph/2,fill=AQUA,width=2,dash=(4,4))
+
+    def raise_photo(event):
+        if not is_free:return
+        found=hit_test(event.x,event.y)
+        if found is None:return
+        # Clic en cualquier parte visible de la foto para traerla delante.
+        selected.set(found)
+        top=max(state[p].get('z',i) for i,p in enumerate(paths))
+        if top>=9999:
+            for z,i in enumerate(sorted(range(len(paths)),key=lambda i:state[paths[i]].get('z',i))):
+                state[paths[i]]['z']=z
+            top=len(paths)-1
+        state[paths[found]]['z']=top+1
+        sync_controls();draw()
+        info.set(f'Foto {found+1} colocada delante. Doble clic sobre otra para cambiar las capas.')
 
     def release(_event):drag['start']=None
     def wheel(event):
@@ -314,7 +442,10 @@ def edit_sheet(parent,paths:list[Path],template:str,initial:dict[Path,dict],
         sync_controls();draw()
     def finish(save):
         if save:
-            if is_free:out={p:validate_layout_item(spec) for p,spec in state.items()}
+            if is_free:
+                out={p:validate_layout_item(spec) for p,spec in state.items()}
+                out[paths[0]]['background']=background.get()
+                out[paths[0]]['background_color']=custom_color[0]
             else:
                 out={paths[0]:{**validate_layout_item(state.get(paths[0])), **ratios}}
                 # Limpiar solo las antiguas divisiones de este grupo.
@@ -329,6 +460,7 @@ def edit_sheet(parent,paths:list[Path],template:str,initial:dict[Path,dict],
     canvas.bind('<Configure>',lambda _e:draw())
     canvas.bind('<ButtonPress-1>',press)
     canvas.bind('<B1-Motion>',moving)
+    canvas.bind('<Double-Button-1>',raise_photo)
     canvas.bind('<ButtonRelease-1>',release)
     canvas.bind('<MouseWheel>',wheel)
     size_slider.configure(command=slider_changed)

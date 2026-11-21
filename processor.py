@@ -634,15 +634,19 @@ def _render_free_sheet(paths: Sequence[Path],opts: ExportOptions,
     from layout_editor import free_default,validate_layout_item
     out_w,out_h=size
     w_mm,h_mm=physical
-    if opts.fit=='Ampliar fondo (sin recortar)':
-        prepared,_=_prepared_photo(paths[0],opts)
-        try:sheet=_extended_background(prepared,size)
-        finally:prepared.close()
-    else:sheet=Image.new('RGB',size,'white')
+    from layout_editor import free_sheet_background, visible_photo_geometry
+    sheet_spec=validate_layout_item(opts.layout_items.get(paths[0]))
+    sheet=free_sheet_background(paths,opts,size,
+                sheet_spec.get('background','Según encaje'),
+                sheet_spec.get('background_color','#FFFFFF'))
     x0,y0,x1,y1=safe
     zone_w=max(1,x1-x0);zone_h=max(1,y1-y0)
     lowres=False
-    for index,path in enumerate(paths):
+    # Renderizar de atrás hacia delante según z (persistente en proyectos y PDF).
+    indices=sorted(range(len(paths)),key=lambda index:(
+        validate_layout_item(opts.layout_items.get(paths[index])).get('z',index),index))
+    for index in indices:
+        path=paths[index]
         spec=validate_layout_item(opts.layout_items.get(path))
         geom=spec.get('rect',free_default(index,len(paths))['rect'])
         cx,cy,rw,rh=geom

@@ -186,8 +186,11 @@ def _draw_custom_background(canvas: Image.Image, source: Image.Image, spec: dict
         return
     mode = spec.get('image_mode','Cubrir')
     base = max(w/sw,h/sh) if mode == 'Cubrir' else min(w/sw,h/sh)
-    stretch_x = float(spec.get('image_zoom_x',1.0)) if mode == 'Libre' else 1.0
-    stretch_y = float(spec.get('image_zoom_y',1.0)) if mode == 'Libre' else 1.0
+    # El control «Tamaño de foto en la hoja» del editor fotográfico también
+    # afecta a las fotos usadas como fondo de portada, no solo a fotos normales.
+    print_scale=float(spec.get('background_edits',{}).get('print_scale',1.0))
+    stretch_x = (float(spec.get('image_zoom_x',1.0)) if mode == 'Libre' else 1.0)*print_scale
+    stretch_y = (float(spec.get('image_zoom_y',1.0)) if mode == 'Libre' else 1.0)*print_scale
     rendered_w = sw*base*stretch_x
     rendered_h = sh*base*stretch_y
     center_x = w*float(spec.get('image_x',.5)) if mode == 'Libre' else w/2

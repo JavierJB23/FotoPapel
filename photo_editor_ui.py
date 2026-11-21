@@ -6,7 +6,7 @@ from tkinter import ttk
 from pathlib import Path
 from PIL import Image, ImageOps, ImageTk
 
-from photo_edits import DEFAULT, LIMITS, validate_edits, apply_edits, geometry_image, auto_white_crop
+from photo_edits import DEFAULT, LIMITS, validate_edits, apply_edits, geometry_image, auto_white_crop, crop_after_transform, crop_after_straighten
 
 BG='#0B1422'; PANEL='#142236'; PANEL2='#1B2D43'; BORDER='#304660'; CREAM='#F6E5C4'
 ACCENT='#4CD9B5'; TEXT='#F2F7FC'; MUTED='#9FB6C9'
@@ -28,7 +28,8 @@ ASPECTS = {
 
 class PhotoEditor(tk.Toplevel):
     def __init__(self, master, path: Path, saved: dict | None, on_save,
-                 *, pdf_flattened: bool = False):
+                 *, pdf_flattened: bool = False, paper_options=None,
+                 cover_spec=None, paper_mm=None):
         super().__init__(master)
         self.title('Revelo · Editar fotografía')
         self.configure(bg=BG)
@@ -41,6 +42,12 @@ class PhotoEditor(tk.Toplevel):
         self._after_job=None
         self._box_px=(0,0,1,1)
         self._drag=None
+        self.paper_options=paper_options
+        self.cover_spec=cover_spec
+        self.paper_mm=paper_mm
+        self._page_view=False
+        self._resize_start=None
+        self._page_handle=(0,0)
         self._compare=False
         self._result=False
         self._confirmed_crop=tuple(self.spec['crop']) if self.spec['crop'] else None
@@ -164,7 +171,10 @@ class PhotoEditor(tk.Toplevel):
         right.pack(side='left',fill='both',expand=True)
         top=tk.Frame(right,bg=PANEL)
         top.pack(fill='x')
-        self._text(top,'VISTA PREVIA · ÁREA DE RECORTE',font=11,bold=True).pack(side='left')
+        self.view_heading=self._text(top,'VISTA PREVIA · ÁREA DE RECORTE',font=11,bold=True)
+        self.view_heading.pack(side='left')
+        self.page_view_btn=self._btn(top,'Ver en hoja',self._toggle_page_view)
+        self.page_view_btn.pack(side='right',padx=(6,0))
         self.result_btn=self._btn(top,'Ver resultado',self._toggle_result)
         self.result_btn.pack(side='right',padx=(7,0))
         self.original_btn=self._btn(top,'Original (mantener)',lambda:None)
@@ -183,8 +193,9 @@ class PhotoEditor(tk.Toplevel):
         self.canvas.bind('<ButtonPress-1>',self._crop_press)
         self.canvas.bind('<B1-Motion>',self._crop_move)
         self.canvas.bind('<ButtonRelease-1>',self._crop_release)
-        self._text(right,'Marca el área y pulsa «Recortar» (crema) para ver el corte. Puedes volver a modificarlo.',
-                   color=MUTED).pack(fill='x')
+        self.help_note=self._text(right,'Marca el área y pulsa «Recortar» (crema) para ver el corte. Puedes volver a modificarlo.',
+                                  color=MUTED)
+        self.help_note.pack(fill='x')
         tk.Label(self,textvariable=self.status,fg=ACCENT,bg=BG,font=('Segoe UI',10),anchor='w').pack(side='bottom',fill='x',padx=20)
         self._bind_wheel(inside)
 
@@ -197,11 +208,16 @@ class PhotoEditor(tk.Toplevel):
         value=tk.Label(line,text=f'{variable.get():.1f}' if key=='straighten' else f'{variable.get():.2f}',fg=ACCENT,bg=PANEL,font=('Segoe UI',9,'bold'))
         value.pack(side='right')
         def updated(raw):
+            old_value=float(self.spec[key])
+            if key=='straighten' and self._source is not None and self.spec['crop']:
+                w,h=self._source.size
+                if self.spec['turns']%2:
+                    w,h=h,w
+                self.spec['crop']=crop_after_straighten(
+                    self.spec['crop'],(w,h),old_value,float(raw))
+                self._confirmed_crop=tuple(self.spec['crop'])
             self.spec[key]=float(raw)
             value.configure(text=f'{float(raw):.1f}' if key=='straighten' else f'{float(raw):.2f}')
-            # Cambia la geometría: un crop existente deja de coincidir visualmente.
-            if key=='straighten':
-                self.spec['crop']=None
             self._schedule()
         tk.Scale(box,from_=low,to=high,resolution=resolution,orient='horizontal',variable=variable,
                  command=updated,showvalue=False,bg=PANEL,fg=TEXT,troughcolor='#28405A',
@@ -243,6 +259,9 @@ class PhotoEditor(tk.Toplevel):
 
     def _display(self):
         if not self.winfo_exists() or self._geometry is None:return
+        if self._page_view:
+            self._display_page()
+            return
         cw,ch=self.canvas.winfo_width(),self.canvas.winfo_height()
         if cw<40 or ch<40:return
         if self._compare:
@@ -268,6 +287,97 @@ class PhotoEditor(tk.Toplevel):
                 self._paint_crop()
         finally:
             if owned:image.close()
+
+    def _toggle_page_view(self):
+        self._page_view=not self._page_view
+        self.page_view_btn.configure(text='Volver al recorte' if self._page_view else 'Ver en hoja')
+        self.view_heading.configure(text='VISTA PREVIA · HOJA DE IMPRESIÓN' if self._page_view
+                                    else 'VISTA PREVIA · ÁREA DE RECORTE')
+        self.canvas.configure(cursor='arrow' if self._page_view else 'crosshair')
+        self.help_note.configure(text=('Verás los cambios de tamaño en la hoja. Arrastra el asa crema de la fotografía para escalar.'
+                     if self._page_view else 'Marca el área y pulsa «Recortar» (crema) para ver el corte.'))
+        self._display()
+
+    def _display_page(self):
+        # Reutiliza el mismo motor de salida que los PDF y documentos Word:
+        # la escala 0,40/1,00 se ve exactamente en el papel.
+        from dataclasses import replace
+        from processor import ExportOptions, render_print_image
+        cw,ch=self.canvas.winfo_width(),self.canvas.winfo_height()
+        if min(cw,ch)<50:return
+        try:
+            if self.cover_spec:
+                from special_pages import render_special_page,validate_special_spec
+                mm=self.paper_mm or (210.0,297.0)
+                ratio=min((cw-36)/mm[0],(ch-36)/mm[1])
+                w=max(50,round(mm[0]*ratio));h=max(50,round(mm[1]*ratio))
+                special=validate_special_spec({**self.cover_spec,'background_edits':self.spec})
+                sheet=render_special_page(special,(w,h))
+            else:
+                opts=self.paper_options or ExportOptions()
+                edits=dict(opts.photo_edits)
+                edits[self.path]=dict(self.spec)
+                options=replace(opts,photo_edits=edits)
+                sheet,_,_=render_print_image(self.path,options,
+                    preview_max_size=(max(100,cw-36),max(100,ch-36)))
+        except Exception as exc:
+            self.status.set('No se pudo componer la vista de impresión: '+str(exc))
+            return
+        try:
+            self._display_photo=ImageTk.PhotoImage(sheet)
+            x=(cw-sheet.width)//2;y=(ch-sheet.height)//2
+            self.canvas.delete('all')
+            self.canvas.create_rectangle(x+6,y+7,x+sheet.width+6,y+sheet.height+7,
+                                         fill='#06111D',outline='')
+            self.canvas.create_image(x,y,anchor='nw',image=self._display_photo)
+            self.canvas.create_rectangle(x,y,x+sheet.width,y+sheet.height,
+                                         outline=ACCENT,width=2)
+            # Asa directamente en la fotografía, no en una celda ficticia.
+            try:
+                from processor import printable_box
+                if self.cover_spec:
+                    spec=self.cover_spec
+                    base=self._source.size
+                    from photo_edits import transformed_dimensions
+                    sw,sh=transformed_dimensions(base,self.spec)
+                    mode=spec.get('image_mode','Cubrir')
+                    ratio=(max(sheet.width/sw,sheet.height/sh) if mode=='Cubrir'
+                           else min(sheet.width/sw,sheet.height/sh))
+                    sx=float(spec.get('image_zoom_x',1.0)) if mode=='Libre' else 1.0
+                    sy=float(spec.get('image_zoom_y',1.0)) if mode=='Libre' else 1.0
+                    pw=sw*ratio*sx*self.spec['print_scale']
+                    ph=sh*ratio*sy*self.spec['print_scale']
+                    center_x=x+sheet.width*float(spec.get('image_x',.5)) if mode=='Libre' else x+sheet.width/2
+                    center_y=y+sheet.height*float(spec.get('image_y',.5)) if mode=='Libre' else y+sheet.height/2
+                else:
+                    opts=self.paper_options or ExportOptions()
+                    from processor import dimensions_mm
+                    phys=dimensions_mm(self.path,opts)
+                    bx0,by0,bx1,by1=printable_box(sheet.size,phys,binding=opts.binding)
+                    from photo_edits import transformed_dimensions
+                    sw,sh=transformed_dimensions(self._source.size,self.spec)
+                    bw=bx1-bx0;bh=by1-by0
+                    ratio=(max(bw/sw,bh/sh) if opts.fit=='Rellenar (recortar)'
+                           else min(bw/sw,bh/sh))
+                    pw=sw*ratio*self.spec['print_scale']
+                    ph=sh*ratio*self.spec['print_scale']
+                    center_x=x+(bx0+bx1)/2
+                    center_y=y+(by0+by1)/2
+                left=center_x-pw/2;top=center_y-ph/2
+                right=center_x+pw/2;bottom=center_y+ph/2
+                # En modo «Ver en hoja» se puede redimensionar tirando del asa.
+                l=max(x,min(x+sheet.width,left));r=max(x,min(x+sheet.width,right))
+                top_clip=max(y,min(y+sheet.height,top));bottom_clip=max(y,min(y+sheet.height,bottom))
+                self.canvas.create_rectangle(l,top_clip,r,bottom_clip,
+                                             outline=ACCENT,width=2,dash=(5,3))
+                hx=max(x+8,min(x+sheet.width-8,r))
+                hy=max(y+8,min(y+sheet.height-8,bottom_clip))
+                self.canvas.create_rectangle(hx-7,hy-7,hx+7,hy+7,
+                                             fill=CREAM,outline=BG,width=2)
+                self._page_handle=(hx,hy)
+            except Exception:
+                self._page_handle=(0,0)
+        finally:sheet.close()
 
     def _paint_crop(self):
         x,y,w,h=self._box_px
@@ -312,6 +422,11 @@ class PhotoEditor(tk.Toplevel):
         return (max(0,min(1,x0+dx*factor)),max(0,min(1,y0+dy*factor)))
 
     def _crop_press(self,event):
+        if self._page_view:
+            rx,ry=self._page_handle
+            if abs(event.x-rx)<22 and abs(event.y-ry)<22:
+                self._resize_start=(event.x,event.y,self.spec['print_scale'])
+            return
         if self._compare or self._result:return
         x,y,w,h=self._box_px
         if w<=0 or h<=0:return
@@ -328,6 +443,13 @@ class PhotoEditor(tk.Toplevel):
         self._crop_move(event)
 
     def _crop_move(self,event):
+        if self._page_view:
+            if self._resize_start:
+                x,y,scale=self._resize_start
+                cw=max(1,self.canvas.winfo_width())
+                next_scale=max(.25,min(1.50,scale+(event.x-x)*2.0/cw))
+                self._slider_vars['print_scale'].set(round(next_scale/.05)*.05)
+            return
         if self._drag is None:return
         kind,start=self._drag
         end=self._fit_aspect(start,self._pos(event))
@@ -339,6 +461,7 @@ class PhotoEditor(tk.Toplevel):
 
     def _crop_release(self,_event):
         self._drag=None
+        self._resize_start=None
 
     def _aspect_changed(self,_event=None):
         a=self._aspect()
@@ -377,15 +500,15 @@ class PhotoEditor(tk.Toplevel):
         else:self.status.set('No se ha detectado un marco blanco que pueda quitarse con seguridad.')
 
     def _transform(self,mode):
+        prior=self.spec['crop']
         if mode=='h':self.spec['flip_h']=not self.spec['flip_h']
         elif mode=='v':self.spec['flip_v']=not self.spec['flip_v']
         else:self.spec['turns']=(self.spec['turns']+mode)%4
-        self.spec['crop']=None
-        self._confirmed_crop=None
-        self._result=False
-        self.result_btn.configure(text='Ver resultado')
+        self.spec['crop']=crop_after_transform(prior,mode)
+        self._confirmed_crop=tuple(self.spec['crop']) if self.spec['crop'] else None
         self._refresh_crop_button()
         self.crop_mode.set('Libre')
+        # Si estaba viendo el recorte confirmado, lo sigue viendo girado.
         self._render()
 
     def _refresh_crop_button(self):
@@ -455,6 +578,9 @@ class PhotoEditor(tk.Toplevel):
 
 
 def edit_photo(master,path:Path,saved:dict|None,on_save,
-               *, pdf_flattened: bool = False):
+               *, pdf_flattened: bool = False, paper_options=None,
+               cover_spec=None,paper_mm=None):
     """Abre editor propio; al guardar devuelve parámetros, nunca altera la foto."""
-    return PhotoEditor(master,path,saved,on_save,pdf_flattened=pdf_flattened)
+    return PhotoEditor(master,path,saved,on_save,pdf_flattened=pdf_flattened,
+                       paper_options=paper_options,cover_spec=cover_spec,
+                       paper_mm=paper_mm)
