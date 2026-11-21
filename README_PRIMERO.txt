@@ -356,3 +356,6 @@ PRUEBAS SUGERIDAS ANTES DE DECLARAR STABLE
   el diseño elegido, el orden, las leyendas y los ajustes de numeración.
 
 REVELO v1.6.2 STABLE/FROZEN permanece como referencia segura.
+
+
+FIX02 cabecera compacta: corregida holgura horizontal para Windows/GitHub Actions.

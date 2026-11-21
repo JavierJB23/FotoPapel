@@ -260,14 +260,14 @@ class ReveloApp:
         row.pack(fill="x")
         self.settings_controls_row = row
         fields = [
-            ("TAMAÑO DE IMPRESIÓN", self.paper, list(PAPER_SIZES), 140),
-            ("ORIENTACIÓN", self.orientation, ["Automática", "Vertical", "Horizontal"], 100),
-            ("ENCAJE EN EL PAPEL", self.fit, list(FIT_MODES), 192),
-            ("CALIDAD", self.dpi, ["150", "300", "600"], 58),
-            ("EXPORTAR COMO", self.output_format, ["PDF", "Word", "Imágenes (mismo formato)"], 185),
-            ("MÁRGENES DE ENCUADERNACIÓN", self.binding, ["No", "Sí"], 194),
+            ("TAMAÑO DE IMPRESIÓN", self.paper, list(PAPER_SIZES), 136),
+            ("ORIENTACIÓN", self.orientation, ["Automática", "Vertical", "Horizontal"], 94),
+            ("ENCAJE EN EL PAPEL", self.fit, list(FIT_MODES), 190),
+            ("CALIDAD", self.dpi, ["150", "300", "600"], 54),
+            ("EXPORTAR COMO", self.output_format, ["PDF", "Word", "Imágenes (mismo formato)"], 183),
+            ("MÁRGENES DE ENCUADERNACIÓN", self.binding, ["No", "Sí"], 190),
             ("FONDO DEL PAPEL", self.paper_background,
-             ["Blanco", "Crema", "Aguamarina", "Azul noche", "Personalizado"], 145),
+             ["Blanco", "Crema", "Aguamarina", "Azul noche", "Personalizado"], 140),
         ]
         settings_holders = []
         for column, (caption, variable, choices, width) in enumerate(fields):
@@ -299,12 +299,17 @@ class ReveloApp:
 
         # Aprovechar espacio en monitores grandes sin que ninguno de los textos
         # largos se corte; al estrechar la ventana se recuperan los mínimos.
-        compact_widths = (140, 100, 192, 58, 185, 194, 145)
+        # Reserva de seguridad para los tamaños reales de Segoe UI en Windows.
+        # En los runners de GitHub una etiqueta puede necesitar varios píxeles más
+        # que en Linux; sin holgura el último campo sobresalía del panel.
+        compact_widths = (136, 94, 190, 54, 183, 190, 140)
         spacious_widths = (153, 119, 228, 70, 225, 205, 175)
         last_widths = [None]
 
         def resize_settings(event):
-            spare = max(0, event.width - sum(compact_widths))
+            # No emplear hasta el último píxel: Windows añade anchura a
+            # ciertas etiquetas y controles nativos. Reservar 32 px.
+            spare = max(0, event.width - sum(compact_widths) - 32)
             budget = sum(spacious_widths) - sum(compact_widths)
             progress = min(1.0, spare / budget) if budget else 0
             widths = tuple(round(lo + (hi - lo) * progress)
