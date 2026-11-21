@@ -65,7 +65,8 @@ def test_crop_button_confirms_and_disables_until_selection_changes(tmp_path):
         assert win._result is True
         assert win.result_btn.cget('text') == 'Modificar recorte'
         assert win.crop_btn.cget('state') == 'disabled'
-        assert win._confirmed_crop == (0.1,0.1,0.8,0.8)
+        assert win.spec['crop'] is None
+        assert win.spec['ops'][-1] == {'kind':'crop','value':[0.1,0.1,0.8,0.8]}
         # El recorte se ve inmediatamente pero permanece reversible.
         with Image.open(src) as original:
             rendered = apply_edits(original, win.spec)
@@ -81,7 +82,7 @@ def test_crop_button_confirms_and_disables_until_selection_changes(tmp_path):
         win.spec['crop'] = [0.2,0.2,0.7,0.7]
         win._refresh_crop_button(); win.crop_btn.invoke()
         win.save(); root.update()
-        assert stored[0]['crop'] == [0.2,0.2,0.7,0.7]
+        assert stored[0]['ops'][-1] == {'kind':'crop','value':[0.2,0.2,0.7,0.7]}
         assert src.read_bytes() == before
     finally:
         if win and win.winfo_exists():win.close()
