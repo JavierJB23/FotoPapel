@@ -51,10 +51,11 @@ def test_caption_window_has_only_one_visible_heading_and_photo_banner(tmp_path):
         assert len(dialogs)==1
         dialog=dialogs[0]
         assert hasattr(dialog,'_editorial_banner')
-        # El banner carece de un segundo título; la cabecera textual aparece
-        # únicamente en el bloque de la ventana, como en la captura acordada.
-        assert not [w for w in dialog._editorial_banner.winfo_children()
-                    if isinstance(w,tk.Label) and w.cget('text').strip()]
+        # v1.8.2: el título se integra dentro del banner fotográfico;
+        # no debe reservar otra fila debajo ni repetirse el nombre del programa.
+        banner_labels=[w.cget('text') for w in dialog._editorial_banner.winfo_children()
+                       if isinstance(w,tk.Label) and w.cget('text').strip()]
+        assert banner_labels==['Texto y pie de foto']
         labels=[]
         def walk(w):
             for child in w.winfo_children():
@@ -72,13 +73,15 @@ def test_no_banner_repeats_brand_in_secondary_windows():
     root=root_or_skip()
     try:
         dialog=tk.Toplevel(root)
+        dialog.title('Revelo · Herramienta')
         label=tk.Label(dialog,text='Herramienta',bg='#081928')
         label.pack()
         apply_window_skin(dialog,compact=True)
         dialog.update()
         banner=dialog._editorial_banner
         assert isinstance(banner,PhotoBanner)
-        assert banner.winfo_height()==62
-        assert not any(child.cget('text') for child in banner.winfo_children() if isinstance(child,tk.Label))
+        assert banner.winfo_height()==78
+        assert [child.cget('text') for child in banner.winfo_children()
+                if isinstance(child,tk.Label) and child.cget('text')]==['Herramienta']
         assert banner._image is not None
     finally:root.destroy()
