@@ -1,0 +1,11 @@
+REVELO v1.8.3 FIX04
+
+Corrige la unica prueba fallida de FIX03: se conserva el texto original "Importar desde móvil · QR".
+
+Para subir:
+1. Descomprime este ZIP.
+2. En el repositorio GitHub, Add file > Upload files.
+3. Arrastra SOLO ui_fix_v183.py y confirma la sustitución del archivo existente.
+4. Commit changes. GitHub compilará automáticamente.
+
+No modifiques el workflow ni ningun otro archivo.
