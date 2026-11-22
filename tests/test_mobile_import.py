@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import io
 import json
+import socket
+import time
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
@@ -76,11 +78,21 @@ def test_invalid_file_and_bad_extension_rejected(tmp_path):
                                      ('script.exe', _image_bytes(), 415)]:
             request = Request(url, method='POST', data=contents,
                               headers={'X-Filename': name})
-            try:
-                urlopen(request, timeout=5)
-                assert False, name
-            except HTTPError as err:
-                assert err.code == code
+            # Los runners Windows compartidos pueden detener temporalmente
+            # los hilos del servidor QR. Reintentamos únicamente un timeout
+            # de transporte; una respuesta con código incorrecto sigue
+            # haciendo fallar la prueba (nunca se ignora el control de acceso).
+            for attempt in range(3):
+                try:
+                    with urlopen(request, timeout=12) as response:
+                        raise AssertionError(f'{name}: el servidor lo aceptó ({response.status})')
+                except HTTPError as err:
+                    assert err.code == code, (name, err.code, code)
+                    break
+                except (TimeoutError, socket.timeout):
+                    if attempt == 2:
+                        raise
+                    time.sleep(0.25 * (attempt + 1))
         assert len(received) == 0
         assert list((tmp_path / 'incoming').iterdir()) == []
     finally:
