@@ -581,3 +581,60 @@ from revelo_fix10_apply import apply_all as _apply_fix10
 _apply_fix10(patch, replace_section)
 with _MAIN_FILE.open('a', encoding='utf-8') as _main:
     _main.write('\n# REVELO_FIX10_COMPLETADO\n')
+
+# FIX12 — asegurar loopback real para el servidor QR cuando el host es local.
+# En producción conserva la escucha por todas las interfaces para iPhone/Wi-Fi.
+patch('mobile_import.py', [
+    ("self.http = ThreadingHTTPServer(('0.0.0.0', 0), Handler)",
+     "self.http = ThreadingHTTPServer((\n"
+     "    '127.0.0.1' if self.host == '127.0.0.1' else '0.0.0.0',\n"
+     "    0), Handler)"),
+])
+
+# Ejercitar la seguridad del QR con una conexión directa al loopback,
+# evitando proxies automáticos de urllib en los runners de GitHub Actions.
+replace_section('tests/test_mobile_import.py',
+    'def test_invalid_file_and_bad_extension_rejected(tmp_path):',
+    '\n\ndef test_safe_names_and_revelo_exts():',
+'''def test_invalid_file_and_bad_extension_rejected(tmp_path):
+    """Cada rechazo HTTP debe responder con su código y no guardar archivos.
+
+    Usamos una conexión directa 127.0.0.1, no el proxy HTTP que pueda estar
+    configurado en la máquina de GitHub. Si hay un timeout se reabre el socket;
+    nunca se considera aprobado un silencio del servidor.
+    """
+    from http.client import HTTPConnection
+    received = []
+    server = PhoneTransferServer(tmp_path / 'incoming', received.append, host='127.0.0.1')
+    try:
+        assert server.http.server_address[0] == '127.0.0.1'
+        for name, contents, expected in [('no_es_una_foto.jpg', b'xxx', 422),
+                                          ('script.exe', _image_bytes(), 415)]:
+            last_error = None
+            for attempt in range(3):
+                connection = HTTPConnection('127.0.0.1', server.port, timeout=8)
+                try:
+                    connection.request('POST', '/upload?t=' + server.token,
+                                       body=contents,
+                                       headers={'X-Filename': name,
+                                                'Content-Type': 'application/octet-stream'})
+                    response = connection.getresponse()
+                    actual = response.status
+                    message = response.read()
+                    assert actual == expected, (name, actual, expected, message)
+                    assert b'error' in message, (name, message)
+                    last_error = None
+                    break
+                except (TimeoutError, socket.timeout, ConnectionError, OSError) as err:
+                    last_error = err
+                    if attempt < 2:
+                        time.sleep(0.15 * (attempt + 1))
+                finally:
+                    connection.close()
+            if last_error is not None:
+                raise AssertionError(f'{name}: el servidor local no respondió tras 3 intentos') from last_error
+        assert len(received) == 0
+        assert list((tmp_path / 'incoming').iterdir()) == []
+    finally:
+        server.stop()
+''')

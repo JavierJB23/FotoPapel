@@ -1,0 +1,25 @@
+REVELO FIX12 — Corrección de fallos en GitHub Actions nº 90
+
+Este ZIP contiene exactamente los archivos que deben subirse:
+  ui_fix_v183.py
+  tests/test_fix10_coherencia.py
+  tests/test_fix12_regresiones.py
+
+Instalación: descomprimir ZIP, subir estos 3 .py en GitHub con Add file > Upload files
+manteniendo los dos tests dentro de la carpeta tests. Commit changes. Actions
+aplicará el parche, ejecutará pruebas y, si pasan, compilará el programa.
+No modificar windows-exe.yml ni editar archivos a mano.
+
+Causas y soluciones:
+- Se estaba pulsando el radio «Fotografía» del apartado Fondo, no el que
+  selecciona la fotografía en el editor libre. Ahora se identifica por
+  value=image, sin confundir controles con el mismo texto.
+- Los tests del servidor QR ahora comprueban las respuestas HTTP reales
+  mediante una conexión directa a 127.0.0.1, sin proxy intermedio. En
+  modo de pruebas, el servidor escucha en 127.0.0.1; cuando se utiliza
+  una IP local real sigue permitiendo importar desde el móvil por Wi-Fi.
+- Siguen comprobándose el código 415, el código 422 y que no se guarda
+  ningún archivo inválido. No se omiten ni se eliminan comprobaciones.
+
+La prueba completa de Windows sigue siendo GitHub Actions. Conservar el
+último ejecutable funcional mientras se valida FIX12.
