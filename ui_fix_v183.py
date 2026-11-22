@@ -4,6 +4,12 @@ Se ejecuta en GitHub Actions antes de las pruebas y de PyInstaller.
 No modifica el motor de impresión ni los datos de los proyectos.
 """
 from pathlib import Path
+import sys
+_FIX06_MARKER = "# REVELO_FIX06_COMPLETADO"
+_MAIN_FILE = Path(__file__).resolve().parent / "main.py"
+if _MAIN_FILE.exists() and _FIX06_MARKER in _MAIN_FILE.read_text(encoding="utf-8"):
+    print("FIX06 ya aplicado; no se repiten sustituciones.")
+    sys.exit(0)
 
 
 def patch(path: str, changes: list[tuple[str, str]]) -> None:
@@ -11,8 +17,8 @@ def patch(path: str, changes: list[tuple[str, str]]) -> None:
     content = target.read_text(encoding='utf-8')
     touched = 0
     for before, after in changes:
-        if after in content:
-            continue  # parche idempotente
+        if content.count(before) == 0 and after in content:
+            continue  # actualización ya aplicada
         if content.count(before) != 1:
             raise RuntimeError(f'No se puede aplicar con seguridad {path}: patrón no único o ausente: {before[:80]!r}')
         content = content.replace(before, after, 1)
@@ -155,3 +161,67 @@ patch('editorial_theme.py', [
      '                                     disabledforeground=MUTED,readonlybackground=SURFACE_2,\n'
      '                                     relief="flat",bd=0)'),
 ])
+
+
+# FIX06: integración real del nuevo dibujo de botones y controles responsivos.
+# Se ejecuta después de FIX05. El cambio es idempotente.
+def replace_section(path: str, opening: str, closing: str, replacement: str) -> None:
+    target = Path(__file__).resolve().parent / path
+    content = target.read_text(encoding='utf-8')
+    if replacement in content:
+        return
+    if content.count(opening) != 1:
+        raise RuntimeError(f'{path}: cabecera a sustituir ausente o repetida')
+    beginning = content.index(opening)
+    end = content.find(closing, beginning)
+    if end == -1:
+        raise RuntimeError(f'{path}: fin de bloque ausente')
+    result = content[:beginning] + replacement + content[end:]
+    target.write_text(result, encoding='utf-8')
+    print(f'{path}: rediseño de botones centralizado')
+
+
+replace_section('editorial_theme.py',
+    'def style_button(button: tk.Button, *, accent=None):',
+    '\ndef skin_tree(',
+    """def style_button(button: tk.Button, *, accent=None):
+    # Implementación común: admite .configure(bg=...) sin fondo rectangular.
+    from revelo_button_skin import style_button as _polished_style_button
+    return _polished_style_button(button, accent=accent)
+
+
+""")
+
+patch('main.py', [
+    ('        files_row.pack(fill="x")',
+     '        files_row.pack(side="left")'),
+    ('        lower_buttons.pack(fill="x", pady=(5,0))',
+     '        lower_buttons.pack(side="left", padx=(9,0))'),
+    ('        self.clear_btn.pack(side="left")\n        tk.Frame(left_panel, height=1, bg=BORDER).pack(fill="x")',
+     '        self.clear_btn.pack(side="left")\n'
+     '        # Pantalla amplia: cuatro acciones en una línea.\n'
+     '        # Pantalla compacta: dividir en dos para no esconder ninguna.\n'
+     '        self._library_buttons_one_row = True\n'
+     '        def align_library_buttons(event=None):\n'
+     '            available = buttons.winfo_width()\n'
+     '            needed = files_row.winfo_reqwidth() + lower_buttons.winfo_reqwidth() + 12\n'
+     '            wide = available >= needed and available > 10\n'
+     '            if wide == self._library_buttons_one_row:\n'
+     '                return\n'
+     '            self._library_buttons_one_row = wide\n'
+     '            files_row.pack_forget()\n'
+     '            lower_buttons.pack_forget()\n'
+     '            if wide:\n'
+     '                files_row.pack(side="left")\n'
+     '                lower_buttons.pack(side="left", padx=(9,0))\n'
+     '            else:\n'
+     '                files_row.pack(fill="x")\n'
+     '                lower_buttons.pack(fill="x", pady=(5,0))\n'
+     '        buttons.bind("<Configure>", align_library_buttons, add="+")\n'
+     '        self.root.after_idle(align_library_buttons)\n'
+     '        tk.Frame(left_panel, height=1, bg=BORDER).pack(fill="x")'),
+])
+
+# Marcador final: evita ejecutar dos veces los parches acumulados sobre el mismo árbol.
+with _MAIN_FILE.open('a', encoding='utf-8') as _main:
+    _main.write('\n# REVELO_FIX06_COMPLETADO\n')

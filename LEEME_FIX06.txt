@@ -1,0 +1,25 @@
+REVELO v1.8.3 — FIX06 | Corrección de botones y alineación
+
+PARA SUBIR A GITHUB (sin editar código):
+1. Descomprime el ZIP en una carpeta.
+2. Abre tu repositorio de Revelo en GitHub.
+3. En Add file > Upload files, arrastra los dos archivos .py de la raíz
+   y la carpeta tests. Confirma los cambios (Commit changes).
+4. GitHub ejecutará automáticamente sus pruebas y la compilación.
+5. Descarga Revelo-Windows-CARPETA si la ejecución está en verde.
+
+CONTENIDO:
+- ui_fix_v183.py: parche COMPLETO (FIX02 a FIX06), ejecutado por el workflow
+  YA CONFIGURADO en tu repositorio. No edites windows-exe.yml.
+- revelo_button_skin.py: componente de botones con bordes transparentes
+  y estados dinámicos. Se importa al compilar.
+- tests/test_fix06_botones_y_distribucion.py: pruebas añadidas de estado activo,
+  muestras de color, esquinas alpha y fila adaptable de botones.
+
+MUY IMPORTANTE: carga AMBOS archivos .py. Si falta revelo_button_skin.py,
+las nuevas ventanas no podrán dibujar los botones.
+
+No se modifica el motor de exportación PDF/Word, QR ni las fotografías.
+Validación local: sintaxis de los archivos, test de botones con Xvfb y
+verificación de los cambios acumulados sobre la estructura de GitHub.
+La validación total y visual final corresponde a la compilación Windows.
