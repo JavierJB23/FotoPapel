@@ -65,7 +65,12 @@ def test_editors_share_same_integrated_heading():
             apply_window_skin(dialog)
             dialog.update_idletasks()
             assert dialog._editorial_banner.heading==heading
-            assert dialog._editorial_banner.winfo_height()==78
+            # En runners Windows sin escritorio visible, Tk puede devolver 1 px
+            # antes de que el administrador de ventanas dibuje el Toplevel.
+            # Verificamos la altura solicitada por el widget y que esté empaquetado.
+            assert int(dialog._editorial_banner.cget('height')) == 78
+            assert dialog._editorial_banner.winfo_reqheight() == 78
+            assert dialog._editorial_banner.winfo_manager() == 'pack'
             assert not form.winfo_exists() or all(c.cget('text')!=heading.upper()
                        for c in form.winfo_children() if isinstance(c,tk.Label))
             dialog.destroy()
