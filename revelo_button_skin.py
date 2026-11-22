@@ -48,8 +48,10 @@ def _paint(width: int, height: int, *, accent: bool, swatch: str | None,
     canvas = Image.new('RGBA', (W, H), (0, 0, 0, 0))
     draw = ImageDraw.Draw(canvas)
     if disabled:
-        fill = '#203244'
-        stroke = '#405667'
+        # Igual que el selector «Fondo del papel» cuando está inhabilitado:
+        # oscuro, sin aguamarina ni efectos de atenuación por tramado.
+        fill = '#172637'
+        stroke = '#30495A'
     elif swatch:
         fill = _blend(swatch, '#FFFFFF', .07) if hover else swatch
         stroke = '#7DA9BB' if swatch.lower() == '#ffffff' else '#5F9DAE'
@@ -116,7 +118,10 @@ def style_button(button: tk.Button, *, accent=None):
                 measured = int(button.tk.call('font', 'measure', button.cget('font'), label))
             except tk.TclError:
                 measured = len(label)*9
-            width = max(42, min(480, measured+46))
+            # En el panel de recorte caben dos botones en la misma fila;
+            # respetar el ancho medido de la fuente sin márgenes excesivos.
+            extra = 24 if label in ('Quitar recorte', 'Quitar bordes') else 46
+            width = max(42, min(480, measured+extra))
             height = 40 if ('Exportar fotos' in label or 'Guardar' in label) else 36
             if label in ('×', '↑', '↓', '…', '↕', '↔'):
                 width, height = 34, 32
@@ -135,8 +140,28 @@ def style_button(button: tk.Button, *, accent=None):
                    fg=button._editorial_requested_fg,
                    activeforeground=button._editorial_requested_fg,
                    bd=0, relief='flat', highlightthickness=0,
-                   padx=0, pady=0,
+                   padx=0, pady=0, disabledforeground='#718693',
                    cursor='arrow' if disabled else 'hand2')
+
+            # Tk/Windows aplica un tramado sobre TODA la imagen cuando el
+            # botón nativo está desactivado (incluidas esquinas transparentes).
+            # Un Label SIN estado disabled, hijo del propio botón y con el
+            # MISMO fondo de la tarjeta, muestra la figura neutra sin tramado.
+            # El Button original conserva state='disabled' y NO ejecuta comandos.
+            overlay = getattr(button, '_editorial_disabled_overlay', None)
+            if disabled:
+                if overlay is None or not overlay.winfo_exists():
+                    overlay = tk.Label(button, bg=button._editorial_parent_bg,
+                                       fg='#718693', bd=0, relief='flat',
+                                       highlightthickness=0)
+                    button._editorial_disabled_overlay = overlay
+                overlay.configure(image=images[2], text=label,
+                                  compound='center', font=button.cget('font'),
+                                  fg='#718693', bg=button._editorial_parent_bg)
+                overlay.place(relx=0, rely=0, relwidth=1, relheight=1)
+                overlay.lift()
+            elif overlay is not None and overlay.winfo_exists():
+                overlay.place_forget()
         except tk.TclError:
             return
 

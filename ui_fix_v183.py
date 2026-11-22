@@ -5,10 +5,10 @@ No modifica el motor de impresión ni los datos de los proyectos.
 """
 from pathlib import Path
 import sys
-_FIX06_MARKER = "# REVELO_FIX06_COMPLETADO"
+_FIX07_MARKER = "# REVELO_FIX07_COMPLETADO"
 _MAIN_FILE = Path(__file__).resolve().parent / "main.py"
-if _MAIN_FILE.exists() and _FIX06_MARKER in _MAIN_FILE.read_text(encoding="utf-8"):
-    print("FIX06 ya aplicado; no se repiten sustituciones.")
+if _MAIN_FILE.exists() and _FIX07_MARKER in _MAIN_FILE.read_text(encoding="utf-8"):
+    print("FIX07 ya aplicado; no se repiten sustituciones.")
     sys.exit(0)
 
 
@@ -222,6 +222,60 @@ patch('main.py', [
      '        tk.Frame(left_panel, height=1, bg=BORDER).pack(fill="x")'),
 ])
 
+# FIX07 — coherencia de estados inhabilitados y espacio de edición.
+# Todos los botones se dibujan en revelo_button_skin.py; se respeta el
+# state real de Tk para no alterar callbacks ni pruebas funcionales.
+
+patch('photo_editor_ui.py', [
+    ("self._btn(tools,'Quitar bordes blancos',self._auto_white)",
+     "self._btn(tools,'Quitar bordes',self._auto_white)"),
+])
+
+patch('custom_editor.py', [
+    # Sustituir el único scrollbar nativo de Revelo por el mismo ttk
+    # editorial usado en el menú principal.
+    ("scroll = tk.Scrollbar(rail,orient='vertical',command=controls_canvas.yview)",
+     "scroll = ttk.Scrollbar(rail,orient='vertical',style='Revelo.Vertical.TScrollbar',"
+     "command=controls_canvas.yview)"),
+    # Las opciones de selección y el modo de foto comparten la primera fila.
+    ("    photo_controls = tk.Frame(right,bg=SURFACE)\n"
+     "    photo_controls.pack(fill='x',pady=(3,8))",
+     "    photo_controls = tk.Frame(pick,bg=SURFACE)\n"
+     "    photo_controls.pack(side='left',padx=(9,0))"),
+    ("tk.Checkbutton(photo_controls,text='Mantener proporción en escala libre',",
+     "tk.Checkbutton(photo_controls,text='Mantener proporción',"),
+    ("    tk.Label(right, text='Mueve el elemento elegido. También puedes arrastrar una foto a esta vista desde el Explorador.',\n"
+     "             bg=SURFACE, fg=MUTED, font=('Segoe UI', 9)).pack(anchor='w', pady=(0,5))\n",
+     ""),
+    ("    tk.Label(right,text='Libre: mueve la foto y ajusta ancho/alto. El espacio libre usa el color o difuminado elegido.',\n"
+     "             bg=SURFACE,fg=MUTED,font=('Segoe UI',8),wraplength=520,justify='left').pack(anchor='w',pady=(0,5))\n",
+     ""),
+    ("    pick.pack(fill='x', pady=(8,4))", "    pick.pack(fill='x', pady=(5,5))"),
+])
+
+patch('editorial_theme.py', [
+    # ttk.Scrollbar de todas las ventanas auxiliares: misma configuración
+    # visual que ScrollingArea del menú principal, sin cambiar su comando.
+    ("        elif isinstance(widget,ttk.Combobox):",
+     "        elif isinstance(widget,ttk.Scrollbar):\n"
+     "            try:\n"
+     "                if str(widget.cget('orient')) == 'vertical':\n"
+     "                    widget.configure(style='Revelo.Vertical.TScrollbar')\n"
+     "            except tk.TclError:pass\n"
+     "        elif isinstance(widget,ttk.Combobox):"),
+    ("    if banner:add_secondary_banner(window,compact=compact)",
+     "    # El mismo estilo que la ventana principal, también en diálogos.\n"
+     "    style.configure('Revelo.Vertical.TScrollbar',\n"
+     "                    background='#285366',troughcolor='#102A3B',\n"
+     "                    arrowcolor='#53E6D0',bordercolor='#173A4D',\n"
+     "                    darkcolor='#204759',lightcolor='#366578',\n"
+     "                    gripcount=0,width=15,relief='flat')\n"
+     "    style.map('Revelo.Vertical.TScrollbar',\n"
+     "              background=[('active','#367687'),('pressed','#428D99')],\n"
+     "              arrowcolor=[('active','#8FFFF0')])\n"
+     "    if banner:add_secondary_banner(window,compact=compact)"),
+])
+
 # Marcador final: evita ejecutar dos veces los parches acumulados sobre el mismo árbol.
 with _MAIN_FILE.open('a', encoding='utf-8') as _main:
-    _main.write('\n# REVELO_FIX06_COMPLETADO\n')
+    _main.write('\n# REVELO_FIX07_COMPLETADO\n')

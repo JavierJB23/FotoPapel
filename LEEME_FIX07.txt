@@ -1,0 +1,32 @@
+REVELO v1.8.3 — FIX07 · Estados, barras y espacio de composición
+===============================================================
+
+QUÉ SE CORRIGE
+- Botones de todas las ventanas: al desactivarlos se muestran oscuros,
+  coherentes y sin tramado ni rectángulos coloreados.
+- Recorte de fotografías: «Quitar bordes» (antes «Quitar bordes blancos»)
+  y botones más compactos que no se solapan.
+- Barras de desplazamiento verticales: estilo del menú principal en
+  Editar fotografía, Texto y pie de foto y Personalizar página.
+- Personalizar página: selección de título/subtítulo/fotografía junto
+  al desplegable de modo FOTO en una única fila; eliminados dos avisos
+  redundantes para dar más altura al papel editable.
+- Se mantienen el resto de mejoras de FIX01–FIX06, así como sus acciones.
+- Pies de foto en composiciones de tres fotos: SIN CAMBIOS (pendiente).
+
+CÓMO SUBIRLO (SIN EDITAR CÓDIGO)
+1. Descomprime este ZIP.
+2. En tu repositorio GitHub JavierJB23/FotoPapel, pulsa Add file > Upload files.
+3. Arrastra juntos ui_fix_v183.py, revelo_button_skin.py y la carpeta tests.
+   GitHub sustituirá los dos archivos existentes y añadirá los tests nuevos.
+4. Pulsa Commit changes. GitHub Actions debería compilar automáticamente.
+5. Descarga el artefacto Revelo-Windows-CARPETA si la ejecución termina en verde.
+
+NO subas este LEEME si no quieres. NO cambies windows-exe.yml.
+No borres tu versión anterior de Revelo hasta comprobar el resultado.
+
+VERIFICACIONES
+- Sintaxis Python y patrones de integración en el código actual revisados.
+- Pruebas locales del componente en Tk/Xvfb: botones activos e inactivos,
+  colores, comandos, esquinas transparentes y botones de recorte.
+- Las pruebas integradas de Revelo y Windows siguen a cargo de GitHub Actions.
