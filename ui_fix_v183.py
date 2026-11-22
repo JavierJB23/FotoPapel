@@ -638,3 +638,18 @@ replace_section('tests/test_mobile_import.py',
     finally:
         server.stop()
 ''')
+
+# FIX13 — Rechazo temprano de una carga demasiado corta para ser una foto.
+# La prueba de CI envía tres bytes con nombre .jpg. Antes, esos bytes se
+# grababan y se entregaban a Pillow para autodetectar el formato; el manejador
+# de HTTP tardaba en responder en el runner Windows. Una foto real no ocupa
+# menos de 16 bytes. El rechazo se hace ANTES de escribir o decodificar,
+# manteniendo el control por extensión (415) y todos los límites anteriores.
+patch('mobile_import.py', [
+    ("                with parent._lock:\n"
+     "                    if parent.count >= MAX_FILES or parent.total_bytes + length > MAX_SESSION_SIZE:",
+     "                if length < 16:\n"
+     "                    return self._json(422, error='La foto está incompleta o dañada.')\n"
+     "                with parent._lock:\n"
+     "                    if parent.count >= MAX_FILES or parent.total_bytes + length > MAX_SESSION_SIZE:"),
+])

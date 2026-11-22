@@ -1,0 +1,24 @@
+REVELO v1.8.3 — FIX13 (solo rechazo temprano de archivos corruptos por QR)
+
+¿QUÉ SE CORRIGE?
+En GitHub Actions #92 (219 pruebas superadas, una fallida) el test del QR
+mandaba 3 bytes como si fueran un archivo JPG. El servidor intentaba crear y
+analizar un archivo manifiestamente incompleto con Pillow y el runner agotaba
+el tiempo de espera. Ahora, si una carga de formato permitido contiene menos
+de 16 bytes, el servidor responde inmediatamente 422 sin crear ningún archivo
+ni invocar el decodificador de imágenes.
+
+El control de extensiones no autorizadas (415), tokens, límites de tamaño y
+acceso local permanece igual. La importación de fotografías reales no cambia.
+
+ARCHIVOS A SUBIR A GITHUB
+- ui_fix_v183.py (raíz; sustituir el anterior mediante Upload files)
+- tests/test_fix13_qr_rechazo_temprano.py (carpeta tests)
+
+No subir LEEME_FIX13.txt, es solo informativo.
+
+COMPILACIÓN
+GitHub ejecuta el parche, corre las pruebas y luego genera el ejecutable.
+Se comprobó sintaxis, estructura del parche y 200 intercambios HTTP locales
+que reproducen respuestas 422 y 415. Aún no se puede certificar el resultado
+del runner Windows hasta que GitHub Actions se ejecute con estos archivos.
