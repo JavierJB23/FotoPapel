@@ -555,3 +555,22 @@ patch('processor.py', [
 
 with _MAIN_FILE.open('a', encoding='utf-8') as _main:
     _main.write('\n# REVELO_FIX08_COMPLETADO\n')
+
+
+# FIX09 — compatibilidad de pruebas de la antigua escala de 25 %.
+# El FIX08 ha ampliado el deslizador libre y el del editor de texto a 5-800 %.
+# Dos pruebas antiguas seguían localizando el control por su mínimo de 25 %
+# y fallaban ANTES de verificar el guardado. No se eliminan las pruebas:
+# se actualiza la identificación del control y se comprueba también su máximo.
+patch('tests/test_v175_fix03_shared_views.py', [
+    ("if isinstance(w,tk.Scale) and int(float(w.cget('from')))==25:\n"
+     "                size_controls.append(w)",
+     "if (isinstance(w,tk.Scale) and int(float(w.cget('from')))==5\n"
+     "                    and int(float(w.cget('to')))==800):\n"
+     "                size_controls.append(w)"),
+    ("if isinstance(w,tk.Scale) and int(float(w.cget('from')))==25:\n"
+     "                scale_controls.append(w)",
+     "if (isinstance(w,tk.Scale) and int(float(w.cget('from')))==5\n"
+     "                    and int(float(w.cget('to')))==800):\n"
+     "                scale_controls.append(w)"),
+])

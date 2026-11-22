@@ -1,0 +1,27 @@
+REVELO v1.8.3 — FIX09 (pruebas de escala 5-800 %)
+
+CAUSA DEL FALLO EN GITHUB ACTIONS #84
+Dos pruebas antiguas buscaron un widget Tk.Scale con mínimo 25.
+FIX08, de forma intencionada, amplió la escala 5-800 %.
+El error ocurrió al buscar el widget, antes de comprobar su valor guardado.
+
+CAMBIOS
+- Se mantienen TODAS las funciones del FIX08 y todas las pruebas originales.
+- El archivo ui_fix_v183.py ajusta automáticamente DOS búsquedas del antiguo mínimo
+  en tests/test_v175_fix03_shared_views.py al nuevo intervalo 5-800 %.
+- Las pruebas originales siguen comprobando que 70 % y 65 % se guardan y sincronizan.
+- Se incluye una prueba nueva que acepta 5-800 % y rechaza valores fuera.
+- No se silencian errores ni se omite ninguna prueba.
+
+INSTALACION (SIN MODIFICAR CODIGO)
+1. Extraer este ZIP.
+2. GitHub > Add file > Upload files.
+3. Subir los tres .py de la raíz y la carpeta tests/.
+4. Commit changes. GitHub Actions compilará si las pruebas pasan.
+5. No modificar windows-exe.yml.
+
+COMPROBACIONES
+- Sintaxis validada de todos los .py del ZIP.
+- Comparados los dos fallos con el LOG REAL de GitHub Actions #84.
+- Verificada la sustitución unívoca y segura de ambos selectores.
+- PENDIENTE: pasar la suite en GitHub Windows y comprobar el EXE.
