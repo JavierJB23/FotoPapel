@@ -274,8 +274,7 @@ class ReveloApp:
         icon_label(editorial_heading,"print",22).pack(side="left", padx=(0, 8))
         self._label(editorial_heading, "Configuración de impresión", size=15,
                     family="Georgia", weight="bold").pack(side="left")
-        self._label(editorial_heading, "  │  FORMATO · ENCAJE · CALIDAD · PAPEL",
-                    color=MUTED, size=8).pack(side="left", padx=(6, 0))
+        # La descripción duplicaba las opciones de los siete selectores.
         # Los selectores ocupan solo el espacio necesario para su opción más larga.
         # Los siete grupos permanecen en una única fila, incluso en ventanas compactas.
         # Se conservan las variables y callbacks anteriores; es solo maquetación.
@@ -349,7 +348,8 @@ class ReveloApp:
         row.bind("<Configure>", resize_settings, add="+")
 
         info = tk.Frame(settings, bg=SURFACE)
-        info.pack(fill="x", pady=(2, 0))
+        # No reservar otra línea para repetir lo ya seleccionado.
+        # Los StringVar siguen actualizándose para los cálculos e informes.
         self._label(info, "●", color=ACCENT, size=10).pack(side="left")
         self._label(info, "  ", color=MUTED).pack(side="left")
         self._label(info, "", size=10, color=MUTED, textvariable=self.overview).pack(side="left")
@@ -536,7 +536,7 @@ class ReveloApp:
         return combo
 
     def _panel(self, parent):
-        return RoundedCard(parent,fill=SURFACE,outline="#56899A",pad=3)
+        return RoundedCard(parent,fill=SURFACE,outline="#56899A",pad=7)
 
     def _update_overview(self, *_):
         try:

@@ -30,9 +30,10 @@ def banner_raster(width: int, height: int, *, primary: bool = False):
     from editorial_art import header_art
     width, height = max(250, int(width)), max(36, int(height))
     base = Image.new('RGB', (width, height), BG)
-    image = header_art(max(500, int(width*.75)), max(height, 75)).convert('RGB')
-    # La fotografía solo ocupa la derecha y se funde con el azul profundo.
-    image = image.resize((max(500, int(width*.70)), height), Image.Resampling.LANCZOS)
+    # La fotografía original tiene formato panorámico 5:1. Respetar
+    # esta proporción evita estirar y pixelar la ilustración en monitores anchos.
+    image = header_art(max(490, int(height * 5)), max(98, height)).convert('RGB')
+    image = image.resize((int(height * 5), height), Image.Resampling.LANCZOS)
     ix = width - image.width
     mask = Image.new('L', (image.width, height))
     px = mask.load()
@@ -42,20 +43,23 @@ def banner_raster(width: int, height: int, *, primary: bool = False):
         for y in range(height):
             px[x,y] = max(0, alpha)
     base.paste(image, (ix,0),mask)
-    draw = ImageDraw.Draw(base)
-    draw.line((0,height-2,width,height-2), fill='#1B5D71', width=1)
-    # Brillo de remate en aguamarina, propio del concepto editorial.
-    draw.line((0,height-1,width,height-1), fill='#1B394A', width=1)
+    # Sin subrayado ni divisores horizontales bajo la panorámica.
     return base
 
 
 class PhotoBanner(tk.Frame):
-    def __init__(self, parent, *, compact=False):
-        super().__init__(parent, bg=BG, height=62 if compact else 97)
+    def __init__(self, parent, *, compact=False, heading=None):
+        super().__init__(parent, bg=BG, height=78 if compact and heading else 62 if compact else 97)
         self.pack_propagate(False)
         self._image=None
         self.bg_label=tk.Label(self,bg=BG,borderwidth=0)
         self.bg_label.place(relwidth=1,relheight=1)
+        self.heading=heading
+        if heading:
+            # Una sola cabecera textual, DENTRO de la fotografía panorámica.
+            self.heading_label=tk.Label(self,text=heading,bg=BG,fg=TEXT,
+                              font=('Georgia',20,'bold'),anchor='w',bd=0)
+            self.heading_label.place(x=23,rely=.52,anchor='w')
         self.bind('<Configure>',self._draw,add='+')
         self._prev_size=(0,0)
     def _draw(self,e):
@@ -66,18 +70,109 @@ class PhotoBanner(tk.Frame):
         self.bg_label.configure(image=self._image)
 
 
+# Título único de cada herramienta, integrado en el encabezado fotográfico.
+# En particular NO mostrar un segundo «Revelo» ni repetir el rótulo abajo.
+EDITORIAL_HEADINGS = {
+    'Texto y pie de foto': 'Texto y pie de foto',
+    'Posición personalizada del texto': 'Posición personalizada del texto',
+    'Editar fotografía': 'Editar fotografía',
+    'Personalizar portada o separador': 'Personalizar página',
+    'Añadir página': 'Crear página',
+    'Editar página': 'Editar página',
+    'Numeración de páginas': 'Numeración de páginas',
+    'Previsualización de impresión': 'Vista previa de impresión',
+    'Importar desde móvil': 'Importar desde móvil',
+    'Diseño libre': 'Composición libre',
+    'Tamaño de fotos': 'Tamaño de fotografías',
+}
+
+# Solo frases secundarias de cabeceras; no se eliminan mensajes ni instrucciones
+# presentes dentro de los editores, para conservar la ayuda importante.
+HEADLINE_NOTES = (
+    'Texto transparente · Ajusta cada elemento a tu gusto.',
+    'Cambios reversibles · Los originales no se modifican',
+    'Elige un fondo, activa los textos que quieras',
+    'Elige un diseño o personaliza una foto',
+    'Comprueba cada página. No se exportará nada',
+    'Se aplicará a previsualización, PDF',
+    'Arrastra la foto para moverla · Tira de esquinas',
+    'Haz clic en una fotografía para seleccionarla. Usa la barra',
+    'Selecciona el texto que deseas mover. Las líneas',
+)
+
+
+def _normalize_heading(value):
+    return ' '.join(str(value).split()).casefold()
+
+
+def _integrate_existing_headings(window, heading):
+    """Eliminar la fila redundante tras trasladar su texto al banner.
+
+    Las llamadas antiguas mantienen intactos sus argumentos, los callbacks y
+    las referencias al modelo: únicamente se retiran widgets ornamentales.
+    """
+    to_remove=[]
+    requested=_normalize_heading(heading)
+    subtitles=[]
+    def visit(node, depth=0):
+        if depth>7:return
+        for widget in node.winfo_children():
+            if isinstance(widget,tk.Label):
+                try: content=widget.cget('text').strip()
+                except tk.TclError:content=''
+                norm=_normalize_heading(content)
+                if norm==requested:
+                    to_remove.append(widget)
+                elif depth<=4 and any(content.startswith(note) for note in HEADLINE_NOTES):
+                    subtitles.append(widget)
+            elif isinstance(widget,(tk.Frame,ttk.Frame)):
+                visit(widget, depth+1)
+    visit(window)
+    for w in to_remove+subtitles:
+        parent=w.master
+        if w.winfo_exists():w.destroy()
+        # Si su contenedor era exclusivamente decorativo, eliminarlo también.
+        if parent is not window and isinstance(parent,tk.Frame):
+            try:
+                if not parent.winfo_children() and parent.winfo_manager()=='pack':
+                    parent.destroy()
+            except tk.TclError:pass
+    # Cabeceras de algunos editores tenían además un icono decorativo.
+    # Tras mover el título al banner ya no necesitan reservar una fila vacía.
+    for top in list(window.winfo_children()):
+        if not isinstance(top,tk.Frame):continue
+        try:
+            remaining=top.winfo_children()
+            if len(remaining)==1 and isinstance(remaining[0],tk.Label) and not remaining[0].cget('text').strip():
+                top.destroy()
+        except tk.TclError:pass
+    # Los grandes editores ganan la altura completa que ocupaban las dos filas.
+    for widget in window.winfo_children():
+        if not isinstance(widget,tk.Frame):continue
+        try:
+            if widget.cget('pady') and int(widget.cget('pady'))>=13:
+                widget.configure(pady=min(8,int(widget.cget('pady'))))
+        except (tk.TclError,ValueError):pass
+    return len(to_remove)
+
+
 def add_secondary_banner(window, *, compact=True, before=None):
-    """Pancarta sin marca ni título: el encabezado existente lo dice UNA sola vez."""
+    """La fotografía Y el título forman UNA sola cabecera.
+
+    Inserción compatible con las ventanas existentes creadas por pack.
+    """
     if getattr(window, '_editorial_banner', None) is not None:
         return window._editorial_banner
-    banner=PhotoBanner(window,compact=compact)
+    name=window.title().split(' · ',1)[-1]
+    heading=EDITORIAL_HEADINGS.get(name,name)
+    # El encabezado es la nueva referencia visual de los títulos.
+    _integrate_existing_headings(window,heading)
+    banner=PhotoBanner(window,compact=compact,heading=heading)
     if before is None:
         siblings=[c for c in window.winfo_children() if c is not banner and c.winfo_manager()=='pack']
         before=siblings[0] if siblings else None
-    if before is not None:
-        banner.pack(fill='x',before=before)
-    else:
-        banner.pack(fill='x')
+    if before is not None:banner.pack(fill='x',before=before)
+    else:banner.pack(fill='x')
     window._editorial_banner=banner
     return banner
 
@@ -226,8 +321,12 @@ def rounded_panel_art(width,height,fill=SURFACE,stroke=OUTLINE, radius=16):
     w,h=max(12,int(width)),max(12,int(height))
     im=Image.new('RGB',(w,h),BG)
     d=ImageDraw.Draw(im)
-    d.rounded_rectangle((0,0,w-1,h-1),radius=min(radius,w//3,h//3),
+    rad=min(radius,w//3,h//3)
+    # Pequeña iluminación editorial superior sin volver opacas las esquinas.
+    d.rounded_rectangle((0,0,w-1,h-1),radius=rad,
                         fill=fill,outline=stroke,width=1)
+    if h>24:
+        d.arc((2,1,w-3,max(16,min(36,h//5))),180,360,fill='#477B8C',width=1)
     return im
 
 
@@ -289,18 +388,25 @@ def icon_label(parent,kind,size=25):
 
 
 def _combobox_asset(width=20,height=29,*,arrow=False,disabled=False):
-    """Borde redondeado y flecha propios; se conservan los menús reales ttk."""
+    """Flecha sin falso subrayado en todos los combobox de Revelo."""
     w,h=width,height
     im=Image.new('RGBA',(w*3,h*3),(0,0,0,0))
     d=ImageDraw.Draw(im)
-    scale=3
-    bg='#152637' if disabled else '#18394C'
-    line='#375364' if disabled else '#6C9DB0'
-    d.rounded_rectangle((3,3,w*3-5,h*3-5),radius=14,fill=bg,outline=line,width=3)
+    bg='#152637' if disabled else '#193A4E'
+    outline='#345567' if disabled else '#6C9DB0'
     if arrow:
-        d.line([(5*3,12*3),(10*3,17*3),(15*3,12*3)],
+        # Antes se dibujaba un segundo rectángulo redondeado en la flecha.
+        # El borde inferior superpuesto parecía una barra o un subrayado.
+        d.rectangle((0,0,w*3,h*3),fill=bg)
+        cy=h*3//2
+        d.line([(w*3//2-13,cy-6),(w*3//2,cy+7),(w*3//2+13,cy-6)],
                fill='#738897' if disabled else AQUA,width=5,joint='curve')
-        d.line([(3,6),(3,h*3-8)],fill=line,width=2)
+    else:
+        # Los extremos de un campo de 20 px son estirados por ttk; dibujar un
+        # contorno inferior crea dos puntos sueltos bajo la zona de flecha.
+        d.rounded_rectangle((3,3,w*3-4,h*3-4),radius=14,fill=bg)
+        d.line((8,3,w*3-8,3),fill=outline,width=2)
+        d.line((3,10,3,h*3-12),fill=outline,width=2)
     return im.resize((w,h),Image.Resampling.LANCZOS)
 
 

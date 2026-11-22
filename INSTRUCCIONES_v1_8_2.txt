@@ -1,0 +1,30 @@
+REVELO v1.8.2 — NUEVA REVISIÓN VISUAL «ESTUDIO EDITORIAL»
+
+ACTUALIZACIÓN DESDE v1.8.1
+1. Descomprime este ZIP de actualización.
+2. Entra en https://github.com/JavierJB23/FotoPapel/upload/main
+3. Arrastra los archivos main.py, editorial_theme.py, CAMBIOS_v1_8_2.txt e
+   INSTRUCCIONES_v1_8_2.txt a la raíz del repositorio.
+4. Arrastra la carpeta tests a la raíz del repositorio. GitHub colocará los
+   archivos de prueba en tests/; NO los subas a la raíz por separado.
+5. Pulsa Commit changes, abre Actions y descarga «Revelo-Windows-CARPETA»
+   cuando la nueva compilación esté completada en verde.
+6. Descomprime el artifact de Windows y abre Revelo.exe sin separarlo
+   de sus archivos auxiliares.
+
+No hay que instalar Python ni modificar GitHub Actions ni requirements.txt.
+
+CAMBIOS
+- Una sola cabecera con título integrado en la fotografía en las ventanas.
+- Suprimidas las filas de encabezado repetidas y ayuda redundante.
+- Mayor superficie útil de edición.
+- Paneles de aspecto más redondeado y colores de alto contraste.
+- Flechas desplegables sin el falso subrayado inferior.
+- Panorámica sin deformación por anchura excesiva.
+- Conservadas las funciones y los proyectos guardados.
+
+RESPALDO: conserva la v1.7.5 FIX03 STABLE/FROZEN sin modificar.
+
+Pruebas realizadas: 178 pruebas de regresión + 5 pruebas móviles correctas,
+2 omitidas por condiciones del entorno. La compilación Windows deberá
+validarse en la acción de GitHub después de subir la revisión.

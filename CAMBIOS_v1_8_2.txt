@@ -1,0 +1,13 @@
+REVELO v1.8.2 — ESTUDIO EDITORIAL / FUSIÓN DE CABECERAS
+
+- Títulos integrados directamente en la franja panorámica de las ventanas auxiliares.
+- Eliminadas filas de subtítulos redundantes, sin modificar la lógica de edición.
+- Más altura disponible en los lienzos y en los controles desplazables.
+- Flechas de todos los desplegables redibujadas sin barra/subrayado inferior.
+- Ilustración panorámica con proporción original para evitar estiramiento.
+- Eliminada línea de separación bajo la fotografía y textos redundantes de la cabecera principal.
+- Ajustados los marcos de tarjetas y paneles, con una iluminación editorial discreta.
+- No se alteran los proyectos, QR, PDF/Word, procesamiento de imágenes ni GitHub Actions.
+
+Instalación: sustituir main.py y editorial_theme.py en el repositorio, y subir
+CAMBIOS_v1_8_2.txt como documentación opcional. GitHub Actions compila el EXE.
