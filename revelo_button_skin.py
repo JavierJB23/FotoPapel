@@ -168,14 +168,22 @@ def style_button(button: tk.Button, *, accent=None):
             overlay = getattr(button, '_editorial_disabled_overlay', None)
             if disabled:
                 if overlay is None or not overlay.winfo_exists():
-                    overlay = tk.Label(button, bg=button._editorial_parent_bg,
+                    # IMPORTANTE EN WINDOWS: un Label HIJO del Button todavía
+                    # puede heredar el tramado nativo al pasar el ratón.
+                    # El overlay debe ser HERMANO del Button y colocarse
+                    # visualmente encima, sin estado disabled ni hover nativo.
+                    overlay = tk.Label(button.master,
+                                       bg=button._editorial_parent_bg,
                                        fg='#718693', bd=0, relief='flat',
-                                       highlightthickness=0)
+                                       highlightthickness=0, cursor='arrow')
+                    overlay.bind('<ButtonPress-1>', lambda _e: 'break')
+                    overlay.bind('<ButtonRelease-1>', lambda _e: 'break')
                     button._editorial_disabled_overlay = overlay
                 overlay.configure(image=images[2], text=label,
                                   compound='center', font=button.cget('font'),
                                   fg='#718693', bg=button._editorial_parent_bg)
-                overlay.place(relx=0, rely=0, relwidth=1, relheight=1)
+                overlay.place(in_=button, relx=0, rely=0,
+                              relwidth=1, relheight=1)
                 overlay.lift()
             elif overlay is not None and overlay.winfo_exists():
                 overlay.place_forget()
@@ -214,6 +222,12 @@ def style_button(button: tk.Button, *, accent=None):
     button.config = configure
     button.bind('<Enter>', lambda _event: set_hover(True), add='+')
     button.bind('<Leave>', lambda _event: set_hover(False), add='+')
+    def _cleanup(event):
+        if event.widget is button:
+            overlay = getattr(button, '_editorial_disabled_overlay', None)
+            if overlay is not None and overlay.winfo_exists():
+                overlay.destroy()
+    button.bind('<Destroy>', _cleanup, add='+')
 
     def set_hover(value: bool):
         button._editorial_hovered = value

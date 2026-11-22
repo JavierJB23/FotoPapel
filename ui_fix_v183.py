@@ -574,3 +574,10 @@ patch('tests/test_v175_fix03_shared_views.py', [
      "                    and int(float(w.cget('to')))==800):\n"
      "                scale_controls.append(w)"),
 ])
+
+# FIX10 — renderizado y geometría compartidos. El archivo de aplicación
+# falla explícitamente si falta un patrón, antes de lanzar pytest/PyInstaller.
+from revelo_fix10_apply import apply_all as _apply_fix10
+_apply_fix10(patch, replace_section)
+with _MAIN_FILE.open('a', encoding='utf-8') as _main:
+    _main.write('\n# REVELO_FIX10_COMPLETADO\n')

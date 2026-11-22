@@ -1,0 +1,69 @@
+REVELO v1.8.3 — FIX10: REVISIÓN INTEGRAL DE MAQUETACIÓN Y EDICIÓN
+
+No sustituye el ejecutable de Windows directamente. Es un paquete para subir
+los archivos a tu repositorio y generar el EXE mediante GitHub Actions.
+
+CAMBIOS
+
+1) BOTONES DESACTIVADOS:
+   Dibujado por encima del botón original mediante una etiqueta independiente
+   hermana del botón, no hija del botón desactivado de Windows. Los píxeles
+   permanecen idénticos al pasar el ratón. El botón subyacente sigue realmente
+   deshabilitado y no ejecuta su acción.
+
+2) PORTADAS Y SEPARADORES:
+   Cuando seleccionas «Fotografía» en la vista de Personalizar página, aparecen
+   8 tiradores (4 esquinas + 4 laterales). Esquinas mantienen proporciones si
+   la casilla está activada; laterales permiten ajustar cada eje. Se amplía
+   el rango de zoom a 5 % — 800 %, igual que en Editar fotografía. El fondo
+   y la previsualización siguen el motor único de portadas.
+   Se elimina «Puedes mover esta ventana y cambiar el papel en Revelo».
+
+3) COMPOSICIÓN LIBRE, CUADRÍCULA Y PLANTILLAS DE TRES FOTOS:
+   El editor deja de simular la composición por una segunda ruta de dibujo:
+   ahora enseña la hoja real reducida de processor.render_layout_page.
+   Los manejadores de posición, tamaño y giro se dibujan por encima de esa
+   hoja. Así la vista de edición y la salida siguen la misma lógica, incluso
+   con edición previa, cambio de fondo, fotos giradas o escala >150 %.
+
+4) FONDOS TRAS GIRAR/ENDEREZAR:
+   Usar máscaras de alpha para que los huecos del enderezado y PNG con
+   transparencia dejen ver el papel real, en hoja de una foto, plantillas de
+   varias fotos y miniaturas de la biblioteca. Sin tapar el fondo con blanco.
+
+5) PIES DE FOTO:
+   El posicionamiento personalizado (incorporado desde FIX08) sigue referido
+   a toda la hoja y el bloque de texto ahora usa su altura real: deja de
+   reservar un rectángulo invisible que impedía llegar a los extremos.
+
+INSTALACIÓN — SIN EDITAR CÓDIGO
+1. Descarga y extrae el ZIP en el ordenador.
+2. Abre el repositorio GitHub JavierJB23/FotoPapel.
+3. Pulsa «Add file» > «Upload files».
+4. Sube TODOS los archivos .py de la raíz del ZIP y la carpeta tests/.
+5. Pulsa «Commit changes». GitHub Actions compilará automáticamente.
+6. Descarga Revelo-Windows-CARPETA cuando Actions esté en verde.
+7. Conserva la última copia estable hasta validar manualmente FIX10.
+
+NO modificar windows-exe.yml. Se seguirá ejecutando ui_fix_v183.py durante
+la compilación, que ahora importa revelo_fix10_apply.py.
+
+COMPROBACIONES ANTES DE ENTREGA
+- Sintaxis de los módulos y bloques sustituidos: validada.
+- 8 pruebas locales reales sobre botones/mascaras/transformaciones: superadas.
+- Comprobación visual local del estado hover de botones: píxeles idénticos.
+- Comparación de anclajes exactos con los archivos originales de GitHub.
+- Pruebas adicionales añadidas en tests/test_fix10_coherencia.py.
+
+PENDIENTE DE VALIDAR POR GITHUB WINDOWS: suite integral, construcción del EXE,
+fluidez en el ordenador del usuario y exportación real de documentos. Nunca
+se interpreta «sintaxis correcta» como «todo el programa probado».
+
+VALIDACIÓN VISUAL RECOMENDADA (cuando compile)
+- Pasa el cursor por «Elegir foto» desactivado y por los demás botones.
+- Personalizar portada: elige fotografía, selecciónala y prueba 8 tiradores.
+- En 3 fotos, gira/endereza la primera y prueba varios fondos.
+- Alterna Cuadrícula, plantillas irregulares y Diseño libre comprobando
+  miniaturas, editor, Previsualización y el PDF exportado.
+- Con pie de foto «Personalizado», muévelo al extremo inferior y lateral
+  de la hoja, también si una fotografía es pequeña o está girada.
