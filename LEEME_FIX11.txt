@@ -1,0 +1,29 @@
+REVELO v1.8.3 — FIX11 · Corrección de las pruebas de la revisión integral
+
+ESTE PAQUETE CONTIENE ÚNICAMENTE UNA PRUEBA ACTUALIZADA.
+No es necesario volver a subir el código de FIX10 ni las demás pruebas, pues ya están en GitHub.
+
+PROBLEMAS DOCUMENTADOS POR LA EJECUCIÓN #88:
+1. Dos casos de enderezado de las pruebas utilizaban 16° y 18°,
+   fuera del máximo válido de 15°. Se han cambiado a 12° y 14°.
+2. La prueba de los ocho puntos elegía el Canvas de mayor área.
+   En algunos tamaños de pantalla, ese Canvas pertenece a la barra lateral,
+   no a la hoja editable. Ahora identifica el lienzo por su cursor="fleur"
+   y espera explícitamente a que se complete el primer dibujo.
+
+NO SE DESACTIVAN LAS ASERCIONES NI SE ALTERA LA APLICACIÓN.
+La prueba sigue exigiendo los 8 puntos y que el tirador derecho cambie
+el ancho sin cambiar el alto de la foto.
+
+INSTALACIÓN (SIN EDITAR CÓDIGO):
+1. Extrae el ZIP.
+2. En GitHub: Add file > Upload files.
+3. Arrastra la carpeta tests tal como viene, para mantener su ruta.
+4. Commit changes y comprueba Actions.
+
+VALIDACIÓN REALIZADA:
+- Sintaxis y estructura de todas las pruebas modificadas, correcto.
+- Comprobación de rango de giro 12° y 14° contra el límite 15°.
+- Inspección del código original en GitHub: el Canvas de la hoja lleva cursor="fleur".
+- No he ejecutado aquí el conjunto completo de Windows/GitHub Actions.
+Esta entrega no debe considerarse una compilación validada hasta que Actions termine en verde.
