@@ -68,7 +68,7 @@ def test_background_from_straighten_is_not_white_in_single_photo_or_thumbnail(tm
     p=image(tmp_path,'inclined.png','#DB2024',(320,110))
     opts=ExportOptions(paper='A5',dpi=100,orientation='Vertical',
         fit='Ajustar (sin recortar)',paper_background='Aguamarina',
-        photo_edits={p:{'straighten':16.0}})
+        photo_edits={p:{'straighten':12.0}})
     image_full,_,_=render_print_image(p,opts,preview_max_size=(320,430))
     tiny=render_photo_thumbnail(p,opts,max_size=(180,250))
     try:
@@ -87,7 +87,7 @@ def test_three_photo_template_preserves_paper_behind_straightened_photo(tmp_path
     opts=ExportOptions(paper='A5',dpi=100,orientation='Vertical',
         photos_per_page=3,layout_template='Grande arriba + 2 abajo',
         fit='Ajustar (sin recortar)',paper_background='Azul noche',
-        photo_edits={a:{'straighten':18.0}})
+        photo_edits={a:{'straighten':14.0}})
     paper,_,_=render_layout_page((a,b,c),opts,preview_max_size=(360,480))
     try:
         assert paper.getpixel((0,0))==(11,25,40)
@@ -184,10 +184,28 @@ def test_8_handles_on_custom_cover_image_editor(tmp_path):
         radios[0].invoke()
         root.update();win.after(220,win.quit);win.mainloop()
         canvases=[w for w in walk(win) if isinstance(w,tk.Canvas)]
-        preview=max(canvases,key=lambda c:c.winfo_width()*c.winfo_height())
-        items=[i for i in preview.find_all() if preview.type(i)=='rectangle'
-            and preview.itemcget(i,'fill').upper()=='#4CE8D4']
-        assert len(items)==8, len(items)
+        # La barra izquierda usa también un Canvas para el desplazamiento. En
+        # los runners de Windows puede ocupar MÁS píxeles que la hoja, de
+        # modo que max(width*height) seleccionaba un lienzo equivocado.
+        previews=[c for c in canvases if str(c.cget('cursor'))=='fleur']
+        assert len(previews)==1, f'Lienzos del editor inesperados: {[(str(c.cget("cursor")), c.winfo_width(), c.winfo_height()) for c in canvases]}'
+        preview=previews[0]
+        def read_handles():
+            return [i for i in preview.find_all() if preview.type(i)=='rectangle'
+                and preview.itemcget(i,'fill').upper()=='#4CE8D4']
+        # Esperar a que termine el repintado real (la imagen se carga de forma
+        # diferida). Si falla, informar del Canvas elegido y sus elementos.
+        import time
+        deadline=time.monotonic()+2.0
+        while True:
+            root.update()
+            items=read_handles()
+            if len(items)==8 or time.monotonic()>=deadline:
+                break
+            time.sleep(.025)
+        assert len(items)==8, (f'Esperados 8 tiradores en el Canvas de la foto; '
+                              f'encontrados {len(items)}. Elementos: '
+                              f'{[(i,preview.type(i),preview.itemcget(i,"fill") if preview.type(i)=="rectangle" else "") for i in preview.find_all()]}')
         # El borde central derecho es un verdadero tirador interactivo.
         centers=[((preview.coords(i)[0]+preview.coords(i)[2])/2,
                   (preview.coords(i)[1]+preview.coords(i)[3])/2) for i in items]
