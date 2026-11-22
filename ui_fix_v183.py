@@ -80,3 +80,17 @@ patch('main.py', [
 patch('caption_editor.py', [
     ('VISTA PREVIA DE LA HOJA · EN DIRECTO', 'VISTA PREVIA DE LA HOJA'),
 ])
+
+# FIX03: En ventanas estrechas, el título de biblioteca ya no comparte la
+# misma fila que los botones. Windows dejaba «Vaciar» sin mapear.
+# Mantener ambas filas de botones y preservar el área derecha más ancha.
+patch('main.py', [
+    ('        title.pack(side="left")\n        library_heading = tk.Frame(title, bg=SURFACE)',
+     '        title.pack(anchor="w")\n        library_heading = tk.Frame(title, bg=SURFACE)'),
+    ('        buttons.pack(side="right")\n        files_row = tk.Frame(buttons, bg=SURFACE)',
+     '        buttons.pack(fill="x", pady=(3, 0))\n        files_row = tk.Frame(buttons, bg=SURFACE)'),
+    ('self.add_btn = self._button(files_row, "+ Añadir fotos / PDF",',
+     'self.add_btn = self._button(files_row, "+ Añadir fotos",'),
+    ('self.mobile_btn = self._button(lower_buttons, "Importar desde móvil · QR",',
+     'self.mobile_btn = self._button(lower_buttons, "Móvil · QR",'),
+])
