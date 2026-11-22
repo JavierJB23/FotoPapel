@@ -178,9 +178,10 @@ def test_8_handles_on_custom_cover_image_editor(tmp_path):
         def walk(w):
             yield w
             for child in w.winfo_children():yield from walk(child)
+        # Hay DOS controles «Fotografía»: el de fondo y el del editor.
         radios=[w for w in walk(win) if isinstance(w,tk.Radiobutton)
-                and w.cget('text')=='Fotografía']
-        assert radios
+                and w.cget('text')=='Fotografía' and str(w.cget('value'))=='image']
+        assert len(radios)==1, 'No se encuentra el selector de foto del editor libre'
         radios[0].invoke()
         root.update();win.after(220,win.quit);win.mainloop()
         canvases=[w for w in walk(win) if isinstance(w,tk.Canvas)]
