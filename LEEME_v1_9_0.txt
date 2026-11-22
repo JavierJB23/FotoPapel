@@ -1,0 +1,62 @@
+REVELO v1.9.0 — BLOCK 01 — QR BIDIRECCIONAL (CANDIDATA, NO STABLE)
+====================================================================
+Base: REVELO v1.8.3 FIX13 STABLE, aceptada por el usuario.
+Repositorio: JavierJB23/FotoPapel
+
+CAMBIOS
+- El botón del menú principal se llama «Conectar móvil QR».
+- Abre una ventana con «Importar desde móvil» y «Exportar desde PC».
+- Importar desde móvil utiliza el servidor EXISTENTE de Revelo, sin modificarlo.
+- Exportar desde PC permite seleccionar:
+  1) Fotografías cargadas (originales sin modificación de bytes).
+  2) Hojas maquetadas (PNG sin pérdidas del mismo motor de impresión).
+  3) Último PDF/Word/carpeta de imágenes exportados.
+  4) Archivos del PC elegidos expresamente.
+- En el iPhone, al escanear el QR se abre la página local para descargar
+  un archivo o seleccionar varios y descargarlos como un ZIP.
+- La descarga no pasa por nube ni servicios externos.
+- Token de acceso aleatorio por sesión, solo archivos autorizados y
+  enlace invalidado al cerrar la ventana.
+
+PARA INSTALAR EN GITHUB (SIN EDITAR NADA)
+1. Descarga y descomprime este ZIP en tu ordenador.
+2. Entra en el repositorio JavierJB23/FotoPapel de GitHub.
+3. Pulsa Add file -> Upload files.
+4. Arrastra LOS CUATRO archivos Python de la raíz de este ZIP:
+     ui_fix_v183.py
+     revelo_qr_patch.py
+     revelo_qr_bidirectional.py
+     revelo_mobile_export.py
+   Arrastra también la carpeta tests con su nuevo archivo:
+     tests/test_v190_qr_bidireccional.py
+5. Pulsa Commit changes.
+6. En Actions, comprueba que la ejecución termine en verde.
+7. Descarga la carpeta compilada de Revelo y descomprímela.
+
+NO subas el archivo LEEME ni los ZIP antiguos. No modifiques workflows
+ni edites archivos de código. Los tests anteriores permanecen en GitHub;
+el parche adapta únicamente las dos aserciones antiguas que comprobaban
+el texto del botón QR antes del cambio de nombre.
+
+COMPROBACIONES DESPUÉS DE COMPILAR EN WINDOWS
+A) Abre Conectar móvil QR -> Importar desde móvil; comprueba que tu iPhone
+   puede enviar fotos como antes.
+B) Abre Conectar móvil QR -> Exportar desde PC -> Elegir archivos del PC;
+   selecciona varias fotos y escanea el QR desde el mismo Wi-Fi.
+C) Descarga una foto individual y varias como ZIP; verifica los archivos.
+D) Elige Hojas maquetadas y comprueba que el PNG descargado coincide con
+   la vista previa de la hoja, incluyendo fotos giradas y pies de foto.
+E) Cierra el QR y comprueba que el enlace ya no responde.
+
+VALIDACIÓN REALIZADA ANTES DE ENTREGAR
+- Sintaxis Python comprobada de los cuatro módulos y del test.
+- Pruebas locales HTTP: 5 superadas (1 prueba de aplicación completa
+  no ejecutable fuera del repositorio completo).
+- Dos pruebas gráficas locales con ventanas Tk: selector QR, exportación
+  del último documento, renderizado de hojas y descarga real: correctas.
+- Parche de integración probado sobre anclajes simulados y contrastado
+  con el código de GitHub: no hay modificaciones al importador anterior.
+PENDIENTES: todas las pruebas de CI en GitHub Actions y validación con
+un iPhone real en la misma red Wi-Fi.
+
+NO DECLARAR STABLE hasta que el usuario pruebe y apruebe la revisión.

@@ -653,3 +653,8 @@ patch('mobile_import.py', [
      "                with parent._lock:\n"
      "                    if parent.count >= MAX_FILES or parent.total_bytes + length > MAX_SESSION_SIZE:"),
 ])
+
+# REVELO QR BIDIRECCIONAL — extensión integrada sobre FIX13 estable.
+# No sustituir ni reconstruir el servidor PhoneTransferServer original.
+from revelo_qr_patch import apply_all as _apply_revelo_qr
+_apply_revelo_qr(patch)
