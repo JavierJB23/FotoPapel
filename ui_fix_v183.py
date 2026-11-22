@@ -92,3 +92,66 @@ patch('main.py', [
     ('self.add_btn = self._button(files_row, "+ Añadir fotos / PDF",',
      'self.add_btn = self._button(files_row, "+ Añadir fotos",'),
 ])
+
+
+# FIX05 — recuperación de la jerarquía, controles editoriales y supresión
+# de líneas ornamentales. Se aplica tras FIX04, sin alterar callbacks.
+patch('main.py', [
+    # Reparto de paneles original: suficiente sitio para dos miniaturas y la hoja.
+    ('        content.grid_columnconfigure(0, weight=4, uniform="grid")\n'
+     '        content.grid_columnconfigure(1, weight=7, uniform="grid")',
+     '        content.grid_columnconfigure(0, weight=5, uniform="grid")\n'
+     '        content.grid_columnconfigure(1, weight=6, uniform="grid")'),
+    # Alinear los bordes exteriores de configuración y paneles inferiores.
+    ('        setting_outer = tk.Frame(self.root, bg=BG, padx=18)',
+     '        setting_outer = tk.Frame(self.root, bg=BG, padx=23)'),
+    ('        content = tk.Frame(self.root, bg=BG, padx=15, pady=4)',
+     '        content = tk.Frame(self.root, bg=BG, padx=23, pady=4)'),
+    # El QR no debe estirarse y dejar «Vaciar» aislado a la derecha.
+    ('        self.mobile_btn.pack(side="left", fill="x", expand=True, padx=(0,7))',
+     '        self.mobile_btn.pack(side="left", padx=(0, 9))'),
+    ('        lower_buttons.pack(fill="x", pady=(7,0))',
+     '        lower_buttons.pack(fill="x", pady=(5,0))'),
+    # Barra de desplazamiento oscura, con flechas aguamarina y relieve integrado.
+    ('        self.bar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)',
+     '        self.bar = ttk.Scrollbar(self, orient="vertical",\n'
+     '                                 style="Revelo.Vertical.TScrollbar",\n'
+     '                                 command=self.canvas.yview)'),
+    ('        setup_combo_style(self.root)\n        style.configure(\n            "Revelo.Horizontal.TProgressbar"',
+     '        setup_combo_style(self.root)\n'
+     '        style.configure("Revelo.Vertical.TScrollbar",\n'
+     '                        background="#285366", troughcolor="#102A3B",\n'
+     '                        arrowcolor="#53E6D0", bordercolor="#173A4D",\n'
+     '                        darkcolor="#204759", lightcolor="#366578",\n'
+     '                        gripcount=0, width=15, relief="flat")\n'
+     '        style.map("Revelo.Vertical.TScrollbar",\n'
+     '                  background=[("active", "#367687"), ("pressed", "#428D99")],\n'
+     '                  arrowcolor=[("active", "#8FFFF0")])\n'
+     '        style.configure(\n            "Revelo.Horizontal.TProgressbar"'),
+])
+
+patch('editorial_theme.py', [
+    # El «rectángulo fantasma» venía de la tira de luz y su recorte angular.
+    # Dejamos una única silueta redondeada, sin otro rectángulo encima.
+    ('    # Tira superior de luz suave: no ocupa texto.\n'
+     '    if not disabled:\n'
+     '        draw.rounded_rectangle((3*s,3*s,W-4*s,min(H//2,H-4*s)),radius=max(2,radius-2*s),fill=hi)\n'
+     '        draw.rectangle((3*s,min(H//2,H-4*s)-radius, W-4*s,H//2+2*s),fill=hi)',
+     '    # Una única superficie: el texto de tk.Button permanece encima.\n'
+     '    # No añadir capas de luz rectangulares sobre las esquinas.'),
+    # Retirar el arco decorativo que se veía como rayitas curvas sobre las fotos.
+    ('    if h>24:\n'
+     '        d.arc((2,1,w-3,max(16,min(36,h//5))),180,360,fill=\'#477B8C\',width=1)',
+     '    # Sin arcos decorativos que parezcan artefactos en tarjetas.'),
+    # Controles de subir/bajar cuadrados con esquinas ligeras, no píldoras.
+    ('    radius=min(H//2,15*s)',
+     '    radius=min(H//2,15*s)\n'
+     '    if w <= 36 and h <= 36:\n'
+     '        radius=5*s'),
+    # Mejorar spinboxes sin tocar variables ni límites.
+    ('                    widget.configure(buttonbackground=SURFACE_2,foreground=TEXT,\n'
+     '                                     disabledforeground=MUTED,readonlybackground=SURFACE_2)',
+     '                    widget.configure(buttonbackground="#285366",foreground=TEXT,\n'
+     '                                     disabledforeground=MUTED,readonlybackground=SURFACE_2,\n'
+     '                                     relief="flat",bd=0)'),
+])

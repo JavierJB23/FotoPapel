@@ -1,0 +1,15 @@
+REVELO v1.8.3 FIX05 — PAQUETE PARA GITHUB
+
+1. Descomprime este ZIP.
+2. En tu repositorio JavierJB23/FotoPapel abre ui_fix_v183.py.
+3. GitHub no permite sobreescribir desde Add file > Upload files si el fichero ya existe en la raiz en algunos flujos.
+   Si muestra conflicto, utiliza la opción de sustituir el archivo disponible en la interfaz de GitHub.
+4. Guarda con Commit changes. El workflow ya tiene configurada la ejecucion automatica del parche.
+
+CAMBIOS: restaurar reparto 5:6, alinear márgenes exteriores, agrupar QR/Vaciar,
+eliminar brillo rectangular de los botones, retirar arcos decorativos, botones de
+orden con esquinas moderadas y barras de desplazamiento personalizadas.
+
+Este archivo es un PARCHE de codigo fuente: no es el ejecutable.
+No se han alterado el motor PDF, QR ni la exportacion.
+Validacion: comprobacion de sintaxis local. GitHub ejecutara las pruebas en Windows.
