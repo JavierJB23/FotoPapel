@@ -5,11 +5,12 @@ import tkinter as tk
 from tkinter import ttk
 from pathlib import Path
 from PIL import Image, ImageOps, ImageTk
+from editorial_theme import apply_window_skin, RoundedCard
 
 from photo_edits import DEFAULT, LIMITS, validate_edits, apply_edits, geometry_image, auto_white_crop, legacy_to_operations
 
-BG='#0B1422'; PANEL='#142236'; PANEL2='#1B2D43'; BORDER='#304660'; CREAM='#F6E5C4'
-ACCENT='#4CD9B5'; TEXT='#F2F7FC'; MUTED='#9FB6C9'
+BG='#081928'; PANEL='#103044'; PANEL2='#193A4E'; BORDER='#304660'; CREAM='#F6E5C4'
+ACCENT='#4CE8D4'; TEXT='#F2F7FC'; MUTED='#9FB6C9'
 
 ASPECTS = {
     'Libre': None,
@@ -56,6 +57,7 @@ class PhotoEditor(tk.Toplevel):
         self.keep_ratio=tk.BooleanVar(value=True)
         self._slider_vars={}
         self._build()
+        apply_window_skin(self,compact=True)
         try:
             with Image.open(self.path) as original:
                 self._source=ImageOps.exif_transpose(original).convert('RGB')
@@ -107,7 +109,7 @@ class PhotoEditor(tk.Toplevel):
 
         frame=tk.Frame(self,bg=BG,padx=17)
         frame.pack(fill='both',expand=True,pady=(0,7))
-        left=tk.Frame(frame,bg=PANEL,width=315)
+        left=RoundedCard(frame,fill=PANEL,pad=5,width=315)
         left.pack(side='left',fill='y',padx=(0,12))
         left.pack_propagate(False)
         self.scroll_canvas=tk.Canvas(left,bg=PANEL,bd=0,highlightthickness=0)
@@ -167,7 +169,7 @@ class PhotoEditor(tk.Toplevel):
         note.configure(wraplength=266,justify='left')
         note.pack(fill='x',pady=(12,8))
 
-        right=tk.Frame(frame,bg=PANEL,padx=11,pady=11)
+        right=RoundedCard(frame,fill=PANEL,pad=11)
         right.pack(side='left',fill='both',expand=True)
         top=tk.Frame(right,bg=PANEL)
         top.pack(fill='x')

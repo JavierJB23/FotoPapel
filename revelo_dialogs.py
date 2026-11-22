@@ -7,13 +7,14 @@ from __future__ import annotations
 
 import tkinter as tk
 from tkinter import font as tkfont
+from editorial_theme import apply_window_skin
 
-BG = '#0B1422'
-PANEL = '#142236'
+BG = '#081928'
+PANEL = '#103044'
 BORDER = '#2D4960'
 TEXT = '#F1F6FB'
 MUTED = '#B1C5D5'
-ACCENT = '#4CD9B5'
+ACCENT = '#4CE8D4'
 WARN = '#F5C96A'
 ERR = '#F58E90'
 
@@ -67,6 +68,7 @@ def _modal(title: str, message: str, *, parent=None, kind='info', question=False
         confirm = button('Sí, continuar', True, True)
     else:
         confirm = button('Aceptar', True, True)
+    apply_window_skin(dialog,compact=True)
     dialog.update_idletasks()
     width = max(390, min(590, max(dialog.winfo_reqwidth(), 460)))
     height = dialog.winfo_reqheight()

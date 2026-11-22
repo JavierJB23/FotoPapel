@@ -10,6 +10,7 @@ from tkinter import ttk, colorchooser
 import tkinter as tk
 
 from PIL import Image, ImageTk, ImageOps
+from editorial_theme import apply_window_skin, icon_label, RoundedCard
 
 from advanced_layout import (CAPTION_PLACEMENTS, CAPTION_ALIGNMENTS,
                              validate_caption, draw_caption)
@@ -17,10 +18,10 @@ from special_pages import FONT_CHOICES
 from processor import render_print_image, render_layout_page, page_groups, ExportOptions
 import revelo_dialogs as messages
 
-BG = '#0B1422'
-SURFACE = '#142236'
-SURFACE_2 = '#1B2D43'
-ACCENT = '#4CD9B5'
+BG = '#081928'
+SURFACE = '#103044'
+SURFACE_2 = '#193A4E'
+ACCENT = '#4CE8D4'
 TEXT = '#F1F6FB'
 MUTED = '#A9BED0'
 
@@ -178,17 +179,20 @@ def edit_caption(parent, path: Path, initial: dict | None,
 
     head=tk.Frame(dialog,bg=BG,padx=21,pady=13)
     head.pack(fill='x')
-    tk.Label(head,text='TEXTO Y PIE DE FOTO',bg=BG,fg=TEXT,
-             font=('Segoe UI',17,'bold')).pack(anchor='w')
-    tk.Label(head,text='Texto transparente · Ajusta cada elemento a tu gusto.',
+    icon_label(head,'text',29).pack(side='left',padx=(0,13))
+    headings=tk.Frame(head,bg=BG)
+    headings.pack(side='left',fill='x')
+    tk.Label(headings,text='Texto y pie de foto',bg=BG,fg=TEXT,
+             font=('Georgia',20,'bold')).pack(anchor='w')
+    tk.Label(headings,text='Texto transparente · Ajusta cada elemento a tu gusto.',
              bg=BG,fg=MUTED,font=('Segoe UI',10)).pack(anchor='w',pady=(4,0))
     content=tk.Frame(dialog,bg=BG)
     content.pack(fill='both',expand=True,padx=20,pady=4)
-    holder=tk.Frame(content,bg=SURFACE,width=410)
+    holder=RoundedCard(content,fill=SURFACE,pad=7,width=410)
     holder.pack(side='left',fill='y',padx=(0,12))
     holder.pack_propagate(False)
     # Papel completo que se actualiza al escribir, elegir fuente/color y escalar.
-    view=tk.Frame(content,bg=SURFACE,padx=12,pady=12)
+    view=RoundedCard(content,fill=SURFACE,pad=12)
     view.pack(side='left',fill='both',expand=True)
     tk.Label(view,text='VISTA PREVIA DE LA HOJA · EN DIRECTO',font=('Segoe UI',11,'bold'),
              fg=TEXT,bg=SURFACE,anchor='w').pack(fill='x',pady=(0,7))
@@ -487,5 +491,6 @@ def edit_caption(parent, path: Path, initial: dict | None,
     _button(buttons,'Guardar texto',lambda:finish(True),accent=True).pack(side='right',padx=9)
     dialog.bind('<Escape>',lambda _ev:finish(False))
     dialog.protocol('WM_DELETE_WINDOW',lambda:finish(False))
+    apply_window_skin(dialog,compact=True)
     dialog.grab_set()
     return dialog

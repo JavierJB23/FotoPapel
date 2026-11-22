@@ -17,6 +17,7 @@ import revelo_dialogs as messagebox
 
 from PIL import Image, ImageTk, ImageOps, ImageDraw
 from editorial_art import header_art
+from editorial_theme import PhotoBanner, RoundedCard, icon_label, style_button, apply_window_skin, skin_tree, setup_combo_style
 
 from processor import (
     ExportOptions, PAPER_SIZES, SUPPORTED_EXTENSIONS, FIT_MODES, export, render_print_image,
@@ -45,11 +46,11 @@ except ImportError:  # El código también puede probarse sin TkDND.
     TkinterDnD = None
 
 APP_NAME = "Revelo"
-BG = "#0B1422"
-SURFACE = "#142236"
-SURFACE_2 = "#1B2D43"
-BORDER = "#2C415A"
-ACCENT = "#4CD9B5"
+BG = "#081928"
+SURFACE = "#103044"
+SURFACE_2 = "#193A4E"
+BORDER = "#41758A"
+ACCENT = "#4CE8D4"
 ACCENT_DARK = "#123B3D"
 TEXT = "#F1F6FB"
 MUTED = "#9CB1C7"
@@ -173,6 +174,7 @@ class ReveloApp:
         self._style()
         self._layout()
         self._configure_file_drop()
+        self.root.after_idle(lambda: skin_tree(self.root))
         self._update_overview()
         self.per_sheet.trace_add("write", self._on_per_sheet_changed)
         self.layout_template.trace_add("write", self._on_template_changed)
@@ -216,6 +218,7 @@ class ReveloApp:
             "Custom.Vertical.TScrollbar", background=SURFACE_2,
             troughcolor=SURFACE, bordercolor=SURFACE, arrowcolor=MUTED,
         )
+        setup_combo_style(self.root)
         style.configure(
             "Revelo.Horizontal.TProgressbar", troughcolor=SURFACE_2,
             background=ACCENT, darkcolor=ACCENT, lightcolor=ACCENT,
@@ -228,54 +231,35 @@ class ReveloApp:
                         bg=bg or parent.cget("bg"), **kw)
 
     def _button(self, parent, text, command, *, accent=False, small=False, **kwargs):
-        """Botón de escritorio con respuesta al pasar el puntero.
-
-        Conserva tk.Button para no romper el estado, el teclado ni los
-        callbacks existentes de Revelo.
-        """
-        normal_bg = ACCENT if accent else SURFACE_2
-        hover_bg = "#75EAD5" if accent else "#29465A"
-        button = tk.Button(
-            parent, text=text, command=command,
-            bg=normal_bg, fg=BG if accent else TEXT,
-            activebackground=hover_bg,
-            activeforeground=BG if accent else TEXT,
-            font=("Segoe UI", 9 if small else 10, "bold"),
-            bd=0, relief="flat", cursor="hand2",
-            highlightbackground="#42657A" if not accent else ACCENT,
-            highlightcolor=ACCENT, highlightthickness=1,
-            padx=11 if small else 16, pady=5 if small else 9, **kwargs,
-        )
-        def hover(_event):
-            if button.cget("state") != "disabled":
-                button.configure(bg=hover_bg)
-        def normal(_event):
-            button.configure(bg=normal_bg)
-        button.bind("<Enter>", hover, add="+")
-        button.bind("<Leave>", normal, add="+")
-        return button
+        """Botón editorial redondeado; sigue siendo tk.Button compatible con Revelo."""
+        button=tk.Button(parent, text=text, command=command,
+                         bg=ACCENT if accent else SURFACE_2,
+                         fg=BG if accent else TEXT,
+                         activebackground=ACCENT if accent else SURFACE_2,
+                         font=("Segoe UI",9 if small else 10,"bold"),
+                         bd=0,relief="flat",cursor="hand2",**kwargs)
+        return style_button(button,accent=accent)
 
     def _layout(self):
         # Cabecera editorial contenida: mantiene el área de trabajo central.
-        header = tk.Frame(self.root, bg=BG, padx=25, pady=10)
+        header = PhotoBanner(self.root)
         header.pack(fill="x")
-        left = tk.Frame(header, bg=BG)
-        left.pack(side="left", fill="x", expand=True)
+        left = tk.Frame(header, bg=BG, padx=22, pady=11)
+        left.pack(side="left", fill="x")
         with Image.open(app_asset("logo_cabecera.png")) as logo:
-            self.header_icon = ImageTk.PhotoImage(logo.convert("RGBA").resize((55, 55), Image.Resampling.LANCZOS))
+            self.header_icon = ImageTk.PhotoImage(logo.convert("RGBA").resize((58, 58), Image.Resampling.LANCZOS))
         tk.Label(left, image=self.header_icon, bg=BG, borderwidth=0).pack(side="left", padx=(0, 14))
         htext = tk.Frame(left, bg=BG)
         htext.pack(side="left")
-        self._label(htext, "Revelo", size=25, weight="bold", family="Georgia").pack(anchor="w")
-        self._label(htext, "Tus fotos y documentos, listos para imprimir", color="#B3C6D2",
-                    size=10, family="Georgia", weight="normal").pack(anchor="w")
+        self._label(htext, "Revelo", size=29, weight="bold", family="Georgia").pack(anchor="w")
+        self._label(htext, "Tus fotos y documentos, listos para imprimir", color="#C6DAE2",
+                    size=11, family="Georgia", weight="normal").pack(anchor="w")
         # Arte del concepto B aprobado: decoración que no bloquea controles.
         # Integrado en Python: la compilación en carpeta no necesita assets extra.
         self.editorial_header_image = ImageTk.PhotoImage(header_art(290, 66))
-        tk.Label(left, image=self.editorial_header_image, bg=BG,
-                 borderwidth=0).pack(side="right", padx=(6, 8))
-        project_buttons = tk.Frame(header, bg=BG)
-        project_buttons.pack(side="right", padx=(10, 0))
+        # La fotografía panorámica ocupa el fondo del encabezado entero.
+        project_buttons = tk.Frame(header, bg=BG, padx=11, pady=27)
+        project_buttons.pack(side="right", padx=(6, 15))
         self.save_project_btn = self._button(project_buttons, "Guardar proyecto", self.save_project_dialog, small=True)
         self.save_project_btn.pack(side="right")
         self.open_project_btn = self._button(project_buttons, "Abrir proyecto", self.open_project_dialog, small=True)
@@ -283,13 +267,12 @@ class ReveloApp:
 
         setting_outer = tk.Frame(self.root, bg=BG, padx=24)
         setting_outer.pack(fill="x")
-        settings = tk.Frame(setting_outer, bg=SURFACE, padx=17, pady=6,
-                            highlightbackground="#3E6679", highlightthickness=1)
+        settings = RoundedCard(setting_outer,fill=SURFACE,outline="#50889A",pad=7)
         settings.pack(fill="x")
         editorial_heading = tk.Frame(settings, bg=SURFACE)
         editorial_heading.pack(fill="x", pady=(0, 3))
-        self._label(editorial_heading, "▤", size=14, color=ACCENT).pack(side="left", padx=(0, 8))
-        self._label(editorial_heading, "Configuración de impresión", size=14,
+        icon_label(editorial_heading,"print",22).pack(side="left", padx=(0, 8))
+        self._label(editorial_heading, "Configuración de impresión", size=15,
                     family="Georgia", weight="bold").pack(side="left")
         self._label(editorial_heading, "  │  FORMATO · ENCAJE · CALIDAD · PAPEL",
                     color=MUTED, size=8).pack(side="left", padx=(6, 0))
@@ -405,7 +388,7 @@ class ReveloApp:
         self._label(progress_row, "", textvariable=self.percent_text, color=ACCENT,
                     weight="bold", size=10, width=7, anchor="e").pack(side="right", padx=(8, 0))
 
-        content = tk.Frame(self.root, bg=BG, padx=23, pady=9)
+        content = tk.Frame(self.root, bg=BG, padx=23, pady=5)
         content.pack(fill="both", expand=True)
         content.grid_rowconfigure(0, weight=1)
         # Prioridad al orden del contenido, especialmente en portátiles.
@@ -416,15 +399,15 @@ class ReveloApp:
         right_panel = self._panel(content)
         right_panel.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
 
-        library_top = tk.Frame(left_panel, bg=SURFACE, padx=15, pady=10)
+        library_top = tk.Frame(left_panel, bg=SURFACE, padx=15, pady=7)
         library_top.pack(fill="x")
         title = tk.Frame(library_top, bg=SURFACE)
         title.pack(side="left")
         library_heading = tk.Frame(title, bg=SURFACE)
         library_heading.pack(anchor="w")
-        self._label(library_heading, "▧", size=15, color=ACCENT).pack(side="left", padx=(0, 7))
+        icon_label(library_heading,"pictures",25).pack(side="left", padx=(0, 7))
         self.library_heading_label = self._label(
-            library_heading, "Fotos y PDF cargados", size=12,
+            library_heading, "Fotos y PDF cargados", size=14,
             family="Georgia", weight="bold")
         self.library_heading_label.pack(side="left")
         # El título se abrevia únicamente en ventanas estrechas para evitar
@@ -441,7 +424,7 @@ class ReveloApp:
         self.special_btn.pack(side="left", padx=(0, 7))
         lower_buttons = tk.Frame(buttons, bg=SURFACE)
         lower_buttons.pack(fill="x", pady=(7,0))
-        self.mobile_btn = self._button(lower_buttons, "Móvil · QR", self.open_mobile_import, small=True)
+        self.mobile_btn = self._button(lower_buttons, "Importar desde móvil · QR", self.open_mobile_import, small=True)
         self.mobile_btn.pack(side="left", fill="x", expand=True, padx=(0,7))
         self.clear_btn = self._button(lower_buttons, "Vaciar", self.clear, small=True)
         self.clear_btn.pack(side="left")
@@ -456,13 +439,13 @@ class ReveloApp:
         self.library_placeholder.pack(pady=115)
         self._register_drop(self.library_placeholder)
 
-        ordering_top = tk.Frame(right_panel, bg=SURFACE, padx=15, pady=10)
+        ordering_top = tk.Frame(right_panel, bg=SURFACE, padx=15, pady=7)
         ordering_top.pack(fill="x")
         rt = tk.Frame(ordering_top, bg=SURFACE)
         rt.pack(side="left")
         order_heading = tk.Frame(rt, bg=SURFACE)
         order_heading.pack(anchor="w")
-        self._label(order_heading, "≋", size=17, color=ACCENT).pack(side="left", padx=(0, 7))
+        icon_label(order_heading,"layers",25).pack(side="left", padx=(0, 7))
         self._label(order_heading, "Orden del contenido", size=14,
                     family="Georgia", weight="bold").pack(side="left")
         self._label(rt, "0 hojas", textvariable=self.page_count_var,
@@ -553,7 +536,7 @@ class ReveloApp:
         return combo
 
     def _panel(self, parent):
-        return tk.Frame(parent, bg=SURFACE, highlightbackground="#3B6074", highlightthickness=1)
+        return RoundedCard(parent,fill=SURFACE,outline="#56899A",pad=3)
 
     def _update_overview(self, *_):
         try:
@@ -768,7 +751,7 @@ class ReveloApp:
         window = tk.Toplevel(self.root)
         window.title('Revelo · ' + ('Editar página' if old else 'Añadir página'))
         self.root.update_idletasks()
-        win_w, win_h = 520, 550
+        win_w, win_h = 520, 605
         x = max(0, self.root.winfo_rootx() + (self.root.winfo_width() - win_w)//2)
         y = max(0, self.root.winfo_rooty() + (self.root.winfo_height() - win_h)//2)
         window.geometry(f'{win_w}x{win_h}+{x}+{y}')
@@ -825,6 +808,7 @@ class ReveloApp:
                 return
             window.destroy()
         self._button(controls, 'Guardar página', create, small=True, accent=True).pack(side='right', padx=(0,9))
+        apply_window_skin(window,compact=True)
         title_input.focus_set()
 
     def _thumbnail(self, path: Path) -> ImageTk.PhotoImage:
@@ -978,8 +962,8 @@ class ReveloApp:
         window = tk.Toplevel(self.root)
         window.title("Revelo · Numeración de páginas")
         window.configure(bg=BG)
-        window.geometry("575x400")
-        window.minsize(495, 350)
+        window.geometry("575x445")
+        window.minsize(495, 395)
         panel = tk.Frame(window, bg=BG, padx=24, pady=19)
         panel.pack(fill="both", expand=True)
         self._label(panel, "NUMERACIÓN DE PÁGINAS", size=16, weight="bold").pack(anchor="w")
@@ -1035,6 +1019,7 @@ class ReveloApp:
             self.feedback.set("Numeración actualizada para todas las hojas.")
         self._button(buttons, "Aplicar", save, accent=True, small=True).pack(side="right", padx=(0, 8))
         window.bind("<Escape>",lambda event: window.destroy())
+        apply_window_skin(window,compact=True)
 
     def _register_drop(self, widget):
         """Permite soltar imágenes/PDF del Explorador usando el TkDND empaquetado."""
@@ -1105,8 +1090,8 @@ class ReveloApp:
         window = tk.Toplevel(self.root)
         self.mobile_window = window
         window.title("Revelo · Importar desde móvil")
-        window.geometry("510x690")
-        window.minsize(455, 605)
+        window.geometry("510x755")
+        window.minsize(455, 655)
         window.configure(bg=BG)
         try:
             ico = app_asset("icono.ico")
@@ -1146,6 +1131,7 @@ class ReveloApp:
         self._button(bottom, "Cerrar QR", self._close_mobile_import, small=True).pack(side="right")
         self._button(bottom, "Copiar enlace", self._copy_mobile_url, small=True).pack(side="left")
         window.protocol("WM_DELETE_WINDOW", self._close_mobile_import)
+        apply_window_skin(window,compact=True)
 
     def _copy_mobile_url(self):
         if self.mobile_server is None:
@@ -1400,10 +1386,9 @@ class ReveloApp:
             self.library_area.inner.grid_columnconfigure(column, weight=1)
         for index, path in enumerate(self.paths):
             selected = self.selected == path
-            card = tk.Frame(self.library_area.inner, bg=SURFACE_2,
-                            highlightbackground=ACCENT if selected else "#3A6074",
-                            highlightthickness=2 if selected else 1,
-                            cursor="hand2", padx=10, pady=9)
+            card = RoundedCard(self.library_area.inner,fill=SURFACE_2,
+                               outline=ACCENT if selected else "#4A8091",
+                               cursor="hand2",pad=9)
             card.grid(row=index // self.library_cols, column=index % self.library_cols,
                       padx=5, pady=5, sticky="nsew")
             thumb = tk.Label(card, image=self._thumbnail(path), bg=SURFACE_2,
@@ -1439,6 +1424,7 @@ class ReveloApp:
                 self._register_drop(drop_target)
         self.library_area._update_scrollregion()
         self.library_area.canvas.yview_moveto(offset)
+        self.root.after_idle(lambda: skin_tree(self.library_area.inner))
 
     def _show_empty_order(self):
         self._clear_children(self.order_area.inner)
@@ -1464,10 +1450,9 @@ class ReveloApp:
         for idx, path in enumerate(self.pages):
             selected = self.order_selected == path
             is_cover = path == pinned
-            slot = tk.Frame(self.order_area.inner, bg=SURFACE_2,
-                            highlightbackground=ACCENT if selected else "#3A6074",
-                            highlightthickness=2 if selected else 1,
-                            padx=10, pady=6, cursor='hand2')
+            slot = RoundedCard(self.order_area.inner,fill=SURFACE_2,
+                               outline=ACCENT if selected else "#4A8091",
+                               pad=6,cursor='hand2')
             slot.foto_slot_index = idx
             slot.pack(fill='x', padx=4, pady=5)
             number = tk.Label(slot, text=f'{idx + 1:02d}',
@@ -1517,6 +1502,7 @@ class ReveloApp:
                 self._register_drop(drop_target)
         self.order_area._update_scrollregion()
         self.order_area.canvas.yview_moveto(offset)
+        self.root.after_idle(lambda: skin_tree(self.order_area.inner))
         if self.preview_window is not None and self.preview_window.winfo_exists():
             self._show_preview_page()
 
@@ -1702,6 +1688,7 @@ class ReveloApp:
         window.bind("<Left>", lambda _event: self._preview_move(-1))
         window.bind("<Right>", lambda _event: self._preview_move(1))
         window.protocol("WM_DELETE_WINDOW", self._close_preview)
+        apply_window_skin(window,compact=True)
         self._show_preview_page()
 
     def _close_preview(self):
@@ -2049,7 +2036,7 @@ class ReveloApp:
         dialog = tk.Toplevel(self.root)
         dialog.title("Revelo · Exportación completada")
         dialog.configure(bg=BG)
-        dialog.geometry("630x375" if warning_count else "630x335")
+        dialog.geometry("630x425" if warning_count else "630x385")
         dialog.minsize(480, 260)
         dialog.resizable(True, True)
         dialog.transient(self.root)
@@ -2103,6 +2090,7 @@ class ReveloApp:
         self._button(footer, "Abrir carpeta", open_folder, small=True).pack(side="right", padx=(0, 8))
         dialog.bind("<Escape>", lambda _evt: dialog.destroy())
         dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
+        apply_window_skin(dialog,compact=True)
         dialog.grab_set()
         dialog.focus_set()
 

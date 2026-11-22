@@ -9,10 +9,11 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import ttk, colorchooser
 from PIL import Image, ImageOps, ImageTk, ImageDraw
+from editorial_theme import apply_window_skin
 from advanced_layout import template_rects
 
-NAVY='#0B1626'
-PANEL='#14243A'
+NAVY='#081928'
+PANEL='#103044'
 MUTED='#9BB4C7'
 AQUA='#4FD9BC'
 CREAM='#F2DAB0'
@@ -643,6 +644,7 @@ def edit_sheet(parent,paths:list[Path],template:str,initial:dict[Path,dict],
     angle_slider.configure(command=angle_changed)
     dialog.after(100,lambda:(sync_controls(),draw()))
     dialog.protocol('WM_DELETE_WINDOW',lambda:finish(False))
+    apply_window_skin(dialog,compact=True)
     return dialog
 
 

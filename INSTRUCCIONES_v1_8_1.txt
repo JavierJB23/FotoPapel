@@ -1,0 +1,49 @@
+REVELO v1.8.1 — ESTUDIO EDITORIAL (revisión de interfaz)
+=======================================================
+
+Qué cambia
+----------
+• Cabecera fotográfica panorámica de ancho completo en la ventana principal.
+• Botones de esquinas redondeadas y colores azul noche / aguamarina.
+• Paneles de trabajo más suaves e iconos propios en los tres encabezados principales.
+• «Importar desde móvil · QR» recupera su texto completo.
+• Nuevo estilo común para editor fotográfico, texto/pie de foto, diseño libre,
+  portada/separador, previsualización, numeración y mensajes de Revelo.
+• Las ventanas auxiliares muestran la foto panorámica SIN volver a escribir
+  «Revelo»: el nombre de la herramienta aparece una sola vez debajo.
+• Sin cambios en el motor de impresión, proyectos .revelo, PDF reversibles,
+  intercambio por QR ni formato de datos.
+
+Requisitos
+----------
+No hay dependencias adicionales. Continúa usando el workflow windows-exe.yml
+que genera Revelo-Windows-CARPETA y conserva sus componentes juntos.
+
+Actualización sencilla por GitHub
+---------------------------------
+1. Guarda tu ejecutable estable (v1.7.5 FIX03) en una carpeta independiente.
+2. Descomprime el ZIP de actualización.
+3. Abre https://github.com/JavierJB23/FotoPapel/upload/main
+4. Arrastra y sustituye en la RAÍZ estos archivos:
+   main.py
+   editorial_theme.py [NUEVO]
+   caption_editor.py
+   photo_editor_ui.py
+   layout_editor.py
+   custom_editor.py
+   revelo_dialogs.py
+   INSTRUCCIONES_v1_8_1.txt
+5. El archivo test_v181_editorial_ui.py va dentro de la carpeta tests.
+6. Pulsa «Commit changes».
+7. En la pestaña Actions, espera la marca verde de «generar-exe» y descarga
+   Revelo-Windows-CARPETA. Descomprime todo y abre Revelo.exe.
+
+Estado: CANDIDATA A ESTABLE hasta verificar el .exe en Windows.
+Se mantiene v1.7.5 FIX03 STABLE/FROZEN como respaldo independiente.
+
+Notas técnicas
+-------------
+Revelo sigue utilizando Tkinter: el nuevo estilo pinta sus botones y tarjetas
+con Pillow sin sustituir el comportamiento de los controles de Windows.
+La referencia gráfica es un diseño conceptual: los detalles de ventanas nativas
+pueden variar según la escala de pantalla y la versión de Windows.

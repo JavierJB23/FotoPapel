@@ -12,6 +12,7 @@ from collections.abc import Callable, Sequence
 import revelo_dialogs as messagebox
 
 from PIL import Image, ImageOps, ImageTk
+from editorial_theme import apply_window_skin, RoundedCard
 from special_pages import (CUSTOM_THEME, validate_special_spec, render_special_page,
                            render_custom_background, draw_custom_text, KINDS, THEMES, FONT_CHOICES)
 from processor import printable_box
@@ -19,10 +20,10 @@ from photo_edits import validate_edits, apply_edits, has_edits
 from photo_editor_ui import edit_photo
 from alignment_guides import guides_for_axis, magnetic_axis
 
-BG = '#0B1422'
-SURFACE = '#142236'
-PANEL = '#1B2D43'
-ACCENT = '#4CD9B5'
+BG = '#081928'
+SURFACE = '#103044'
+PANEL = '#193A4E'
+ACCENT = '#4CE8D4'
 TEXT = '#F1F6FB'
 MUTED = '#9CB1C7'
 PREVIEW_FRAME_MS = 16  # Límite de repintado objetivo (~60 Hz); no una garantía de FPS.
@@ -105,7 +106,7 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
     initial.setdefault('background_image', '')
     initial.setdefault('background_color', '#F6EBDC')
     initial.setdefault('background_fill', 'color')
-    initial.setdefault('text_color', '#1B2D43')
+    initial.setdefault('text_color', '#193A4E')
     initial.setdefault('subtitle_color', '#334C63')
     initial.setdefault('title_size', 12)
     initial.setdefault('subtitle_size', 6)
@@ -152,7 +153,7 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
     body.pack(fill='both', expand=True)
     # Panel de propiedades desplazable: los controles nuevos no se cortan en
     # pantallas pequeñas, sin robar espacio a la hoja de previsualización.
-    rail = tk.Frame(body, bg=SURFACE, width=352)
+    rail = RoundedCard(body,fill=SURFACE,pad=3,width=352)
     rail.pack(side='left', fill='y', padx=(0,14))
     rail.pack_propagate(False)
     controls_canvas = tk.Canvas(rail,bg=SURFACE,highlightthickness=0,width=330)
@@ -189,7 +190,7 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
             widget.bindtags((wheel_tag,) + tags)
         for child in widget.winfo_children():
             register_scroll_widgets(child)
-    right = tk.Frame(body, bg=SURFACE, padx=12, pady=12)
+    right = RoundedCard(body,fill=SURFACE,pad=12)
     right.pack(side='left', fill='both', expand=True)
 
     fields = {
@@ -849,4 +850,5 @@ def edit_custom_page(root: tk.Tk, *, initial: dict, image_dir: Path,
               padx=20, pady=9).pack(side='right', padx=(0,9))
     register_scroll_widgets(rail)
     window.after(30, refresh)
+    apply_window_skin(window,compact=True)
     return window
