@@ -279,3 +279,279 @@ patch('editorial_theme.py', [
 # Marcador final: evita ejecutar dos veces los parches acumulados sobre el mismo árbol.
 with _MAIN_FILE.open('a', encoding='utf-8') as _main:
     _main.write('\n# REVELO_FIX07_COMPLETADO\n')
+
+# FIX08 — consistencia de miniaturas, escala libre extendida, composición
+# de fotografías giradas y coordenadas de pie de foto respecto a toda la hoja.
+# Los cambios se aplican exclusivamente sobre el proyecto original en CI.
+
+patch('photo_edits.py', [
+    ("'print_scale': (0.25, 1.5)", "'print_scale': (0.05, 8.0)"),
+])
+
+patch('photo_editor_ui.py', [
+    ("self._range(inside,'Escala de impresión', 'print_scale', .25, 1.50, resolution=.05)",
+     "self._range(inside,'Escala de impresión', 'print_scale', .05, 8.00, resolution=.05)"),
+])
+
+patch('layout_editor.py', [
+    ('photo_scales={p:max(.25,min(1.5,', 'photo_scales={p:max(.05,min(8.0,'),
+    ('to=150 if is_free else 80,resolution=1', 'to=800 if is_free else 80,resolution=1'),
+    ('to=150 if is_free else 80,', 'to=800 if is_free else 80,'),
+    ('photo_scales[paths[i]]=max(.25,min(1.5,val/100))',
+     'photo_scales[paths[i]]=max(.05,min(8.0,val/100))'),
+    ('photo_scales[paths[index]]=round(max(.25,min(1.5,base*factor)),4)',
+     'photo_scales[paths[index]]=round(max(.05,min(8.0,base*factor)),4)'),
+])
+
+patch('caption_editor.py', [
+    ('photo_scale_slider=tk.Scale(scale_row,from_=25,to=150 if unified else 100',
+     'photo_scale_slider=tk.Scale(scale_row,from_=5 if unified else 25,to=800 if unified else 100'),
+    ('scale_spin=tk.Spinbox(scale_row,from_=25,to=150 if unified else 100',
+     'scale_spin=tk.Spinbox(scale_row,from_=5 if unified else 25,to=800 if unified else 100'),
+    ('min(150 if unified else 100,starting+delta*100/width)',
+     'min(800 if unified else 100,starting+delta*100/width)'),
+    ('round(max(25,min(800 if unified else 100,starting+delta*100/width))))',
+     'round(max(5 if unified else 25,min(800 if unified else 100,starting+delta*100/width))))'),
+])
+
+patch('main.py', [
+    # El diseño y número de fotos forman parte de la identidad visual de
+    # la miniatura, aunque el conjunto de fotos no haya cambiado.
+    ('        key = (tuple(group), sheet_index, self.paper.get(), self.orientation.get(),',
+     '        key = (tuple(group), sheet_index, self.layout_template.get(), self.per_sheet.get(),\n'
+     '               self.paper.get(), self.orientation.get(),'),
+    ('        self._refresh_layout_button()\n        self.render_order()\n\n    def _on_template_changed',
+     '        self._refresh_layout_button()\n        self.sheet_thumbnails.clear()\n        self.render_order()\n\n    def _on_template_changed'),
+    ('        self._refresh_layout_button()\n        self.render_order()\n\n    def _on_layout_hint_resize',
+     '        self._refresh_layout_button()\n        self.sheet_thumbnails.clear()\n        self.render_order()\n\n    def _on_layout_hint_resize'),
+    ("            image = (self._sheet_thumbnail(group, sheet_number[path]-1)\n"
+     "                     if (len(group) == 1 or (self.layout_template.get() == 'Diseño libre'\n"
+     "                           and any(p in self.layout_items for p in group)))\n"
+     "                     else self.thumbnails_small[path])",
+     "            # Mostrar siempre la hoja REAL en ambos diseños; cambiar\n"
+     "            # libre/cuadrícula no debe dejar la miniatura anterior.\n"
+     "            image = self._sheet_thumbnail(group, sheet_number[path]-1)"),
+])
+
+patch('advanced_layout.py', [
+    # Formato optativo: los proyectos antiguos siguen con coordenadas locales.
+    ('    for key in ("title_x", "title_y", "detail_x", "detail_y"):',
+     '    if "position_space" in spec:\n'
+     '        if spec["position_space"] not in ("page", "photo"):\n'
+     '            raise ValueError("Sistema de posición de pie de foto incorrecto")\n'
+     '        clean["position_space"] = spec["position_space"]\n'
+     '    for key in ("title_x", "title_y", "detail_x", "detail_y"):'),
+    # La caja del texto se ajusta a su anchura, en vez de ocupar el 86 % de
+    # la hoja: se puede llevar de verdad a cualquier esquina imprimible.
+    ('                rw=min(max_width,max(40,round(w*.86)))',
+     '                measured=max((draw.textlength(line, font=fonts[key])\n'
+     '                              for line in txt.splitlines()), default=0)\n'
+     '                rw=min(max_width,max(40,min(round(w*.78),round(measured+pad*3))))'),
+])
+
+patch('processor.py', [
+    # Capturas personalizadas modernas: coordenadas de la hoja, no de celda.
+    ('    lowres=False\n    # Renderizar de atrás hacia delante según z (persistente en proyectos y PDF).',
+     '    lowres=False\n    page_captions=[]\n'
+     '    # Renderizar de atrás hacia delante según z (persistente en proyectos y PDF).'),
+    # Reemplazar el cálculo pesado de una imagen girada por una transformación
+    # directa exclusivamente de los píxeles visibles dentro de la hoja.
+    ("            photo=(content.resize(usable,Image.Resampling.LANCZOS) if spec.get('stretch',False)\n"
+     "                   else ImageOps.contain(content,usable,Image.Resampling.LANCZOS)).convert('RGBA')\n"
+     "            try:\n"
+     "                rotated=photo.rotate(-float(spec.get('angle',0.)),Image.Resampling.BICUBIC,expand=True)\n"
+     "                try:\n"
+     "                    px=round(x0+zone_w*cx-rotated.width/2)\n"
+     "                    py=round(y0+zone_h*cy-footer/2-rotated.height/2)\n"
+     "                    sheet.paste(rotated,(px,py),rotated)\n"
+     "                finally:rotated.close()\n"
+     "            finally:photo.close()",
+     "            from revelo_free_layers import editing_alpha, visible_photo_patch\n"
+     "            alpha=editing_alpha(path,opts.photo_edits.get(path),content.size)\n"
+     "            try:\n"
+     "                visible=visible_photo_patch(content,alpha,(0,0,out_w,out_h),\n"
+     "                    (x0+zone_w*cx,y0+zone_h*cy-footer/2),usable,\n"
+     "                    float(spec.get('angle',0.)),stretch=bool(spec.get('stretch',False)))\n"
+     "                if visible is not None:\n"
+     "                    cropped,origin=visible\n"
+     "                    try:sheet.paste(cropped,origin,cropped.getchannel('A'))\n"
+     "                    finally:cropped.close()\n"
+     "            finally:\n"
+     "                if alpha is not None:alpha.close()"),
+    ("        if has_caption(cap):\n"
+     "            left=round(x0+zone_w*cx-bw/2)",
+     "        if has_caption(cap):\n"
+     "            if cap.get('placement')=='Personalizado' and cap.get('position_space')=='page':\n"
+     "                page_captions.append(cap)\n"
+     "                continue\n"
+     "            left=round(x0+zone_w*cx-bw/2)"),
+    ("    draw_page_number(sheet,printed_number,placement=opts.numbering_position,\n"
+     "                     physical_mm=physical,page_index=page_index,\n"
+     "                     number_format=opts.numbering_format)\n"
+     "    return sheet,physical,lowres",
+     "    # Los textos libres se dibujan al final, siempre por encima del collage.\n"
+     "    for cap in page_captions:\n"
+     "        draw_caption(sheet,(0,0,out_w,out_h),cap,mode='Personalizado',\n"
+     "                     px_per_mm=out_w/w_mm)\n"
+     "    draw_page_number(sheet,printed_number,placement=opts.numbering_position,\n"
+     "                     physical_mm=physical,page_index=page_index,\n"
+     "                     number_format=opts.numbering_format)\n"
+     "    return sheet,physical,lowres"),
+    # También en cuadrícula se admite una posición personalizada de página.
+    ('    lowres_any = False\n    for idx, path in enumerate(paths):',
+     '    lowres_any = False\n    page_captions=[]\n    for idx, path in enumerate(paths):'),
+    ('        draw_caption(sheet, (cx0,cy0,cx1,cy1), cap,\n'
+     '                     mode=cap.get("placement", "Debajo") if cap else "Debajo",\n'
+     '                     px_per_mm=out_w/w_mm, below_start_y=below_caption_start)',
+     '        if cap and cap.get("placement")=="Personalizado" and cap.get("position_space")=="page":\n'
+     '            page_captions.append(cap)\n'
+     '        else:\n'
+     '            draw_caption(sheet, (cx0,cy0,cx1,cy1), cap,\n'
+     '                         mode=cap.get("placement", "Debajo") if cap else "Debajo",\n'
+     '                         px_per_mm=out_w/w_mm, below_start_y=below_caption_start)'),
+    ('    draw_page_number(sheet, printed_number, placement=opts.numbering_position,\n'
+     '                     physical_mm=(w_mm,h_mm), page_index=page_index, number_format=opts.numbering_format)\n'
+     '    return sheet, (w_mm, h_mm), lowres_any',
+     '    for cap in page_captions:\n'
+     '        draw_caption(sheet,(0,0,out_w,out_h),cap,mode="Personalizado",\n'
+     '                     px_per_mm=out_w/w_mm)\n'
+     '    draw_page_number(sheet, printed_number, placement=opts.numbering_position,\n'
+     '                     physical_mm=(w_mm, h_mm), page_index=page_index,\n'
+     '                     number_format=opts.numbering_format)\n'
+     '    return sheet, (w_mm, h_mm), lowres_any'),
+])
+
+patch('layout_editor.py', [
+    # Imágenes del editor y del PDF comparten la máscara; blancos rotados
+    # transparentan el fondo de papel, sin introducir un color propio.
+    ('    thumbs=[]\n    for p in paths:',
+     '    thumbs=[]\n    alpha_thumbs=[]\n    for p in paths:'),
+    ('        photo.thumbnail((760,760),Image.Resampling.LANCZOS)\n        thumbs.append(photo)',
+     '        photo.thumbnail((760,760),Image.Resampling.LANCZOS)\n'
+     '        from revelo_free_layers import editing_alpha\n'
+     '        alpha_thumbs.append(editing_alpha(p,opts.photo_edits.get(p),photo.size))\n'
+     '        thumbs.append(photo)'),
+    ("            fitted=(img.resize((iw,ih),Image.Resampling.BILINEAR) if is_free and state[paths[i]].get('stretch',False)\n"
+     "                    else ImageOps.contain(img,(iw,ih),Image.Resampling.BILINEAR))\n"
+     "            if is_free and abs(deg)>0.5:\n"
+     "                with_alpha=fitted.convert('RGBA')\n"
+     "                fitted.close()\n"
+     "                fitted=with_alpha.rotate(-deg,Image.Resampling.BICUBIC,expand=True)\n"
+     "            rendered=ImageTk.PhotoImage(fitted)\n"
+     "            photos.append(rendered)\n"
+     "            cx=(unrotated[0]+unrotated[2])//2\n"
+     "            cy=(unrotated[1]+unrotated[3])//2\n"
+     "            canvas.create_image(cx,cy,image=rendered,anchor='center')\n"
+     "            fitted.close()",
+     "            cx=(unrotated[0]+unrotated[2])//2\n"
+     "            cy=(unrotated[1]+unrotated[3])//2\n"
+     "            if is_free:\n"
+     "                from revelo_free_layers import visible_photo_patch\n"
+     "                visible=visible_photo_patch(img,alpha_thumbs[i],(x,y,x+w,y+h),\n"
+     "                    (cx,cy),(iw,ih),deg,stretch=True)\n"
+     "                if visible is not None:\n"
+     "                    fitted,origin=visible\n"
+     "                    try:\n"
+     "                        rendered=ImageTk.PhotoImage(fitted)\n"
+     "                        photos.append(rendered)\n"
+     "                        canvas.create_image(*origin,image=rendered,anchor='nw')\n"
+     "                    finally:fitted.close()\n"
+     "            else:\n"
+     "                fitted=ImageOps.contain(img,(iw,ih),Image.Resampling.BILINEAR)\n"
+     "                try:\n"
+     "                    rendered=ImageTk.PhotoImage(fitted)\n"
+     "                    photos.append(rendered)\n"
+     "                    canvas.create_image(cx,cy,image=rendered,anchor='center')\n"
+     "                finally:fitted.close()"),
+    ('        for photo in thumbs:photo.close()\n        dialog.destroy()',
+     '        for photo in thumbs:photo.close()\n'
+     '        for alpha in alpha_thumbs:\n'
+     '            if alpha is not None:alpha.close()\n'
+     '        dialog.destroy()'),
+])
+
+patch('caption_editor.py', [
+    ('def _edit_positions(parent: tk.Toplevel, path: Path, spec: dict, opts: ExportOptions,\n'
+     '                    on_commit) -> None:',
+     'def _edit_positions(parent: tk.Toplevel, path: Path, spec: dict, opts: ExportOptions,\n'
+     '                    on_commit, *, page_paths=None, page_index=0) -> None:'),
+    ('        base, (wmm,hmm), _=render_print_image(path,opts,preview_max_size=(780,570))',
+     '        from dataclasses import replace\n'
+     '        group=tuple(page_paths or (path,))\n'
+     '        # No pintar dos veces el texto que estamos moviendo.\n'
+     '        captions=dict(opts.captions)\n'
+     '        captions[path]={"title":"","detail":"","placement":"Personalizado"}\n'
+     '        base, (wmm,hmm), _=render_layout_page(group,replace(opts,captions=captions),\n'
+     '            page_index=page_index,preview_max_size=(780,570))'),
+    # Convertir posiciones locales antiguas a coordenadas de hoja al entrar
+    # en el editor libre; conservar el formato original si se cancela.
+    ('    current_photo=[None]\n    bounds=[0,0,1,1]',
+     '    if spec.get("position_space") != "page" and len(group)>1:\n'
+     '        if opts.layout_template=="Diseño libre":\n'
+     '            from layout_editor import free_default,validate_layout_item\n'
+     '            idx=group.index(path)\n'
+     '            loc=validate_layout_item(opts.layout_items.get(path)).get(\n'
+     '                "rect",free_default(idx,len(group))["rect"])\n'
+     '            for label in ("title","detail"):\n'
+     '                px=positions[label+"_x"];py=positions[label+"_y"]\n'
+     '                positions[label+"_x"]=max(0,min(1,loc[0]+(px-.5)*loc[2]))\n'
+     '                positions[label+"_y"]=max(0,min(1,loc[1]+(py-.5)*loc[3]))\n'
+     '    current_photo=[None]\n    bounds=[0,0,1,1]'),
+    ('            payload=dict(spec,placement=\'Personalizado\',**positions)',
+     '            payload=dict(spec,placement=\'Personalizado\',**positions)\n'
+     '            payload[\'position_space\']=\'page\''),
+    ('            on_commit(dict(positions))',
+     '            on_commit(dict(positions, position_space="page"))'),
+    ('        _edit_positions(dialog,path,data,opts,saved_pos)',
+     '        _edit_positions(dialog,path,data,opts,saved_pos,\n'
+     '                        page_paths=page_paths,page_index=page_index)'),
+    # Guardar la nueva coordenada sin modificar proyectos antiguos sólo por abrir.
+    ("    positions={k:spec.get(k,default) for k,default in (\n"
+     "        ('title_x',.5),('title_y',.84),('detail_x',.5),('detail_y',.92))}",
+     "    positions={k:spec.get(k,default) for k,default in (\n"
+     "        ('title_x',.5),('title_y',.84),('detail_x',.5),('detail_y',.92))}\n"
+     "    if spec.get('position_space')=='page':positions['position_space']='page'"),
+    # Marco real de la fotografía seleccionada en libre, con giro y escala.
+    ('                photo_handle[:]=[right,bottom]\n                preview_canvas.create_rectangle(left,top,right,bottom,outline=ACCENT,width=2)',
+     '                if new_opts.layout_template=="Diseño libre":\n'
+     '                    from layout_editor import free_default,visible_photo_geometry,validate_layout_item\n'
+     '                    from photo_edits import transformed_dimensions\n'
+     '                    ls=validate_layout_item(new_opts.layout_items.get(path))\n'
+     '                    loc=ls.get("rect",free_default(idx,len(group))["rect"])\n'
+     '                    try:\n'
+     '                        with Image.open(path) as original:\n'
+     '                            iw0,ih0=original.size\n'
+     '                            if original.getexif().get(274) in (5,6,7,8):iw0,ih0=ih0,iw0\n'
+     '                        sw0,sh0=transformed_dimensions((iw0,ih0),edits.get(path))\n'
+     '                    except (OSError,ValueError):sw0,sh0=max(1,int(cw)),max(1,int(ch))\n'
+     '                    actual_scale=(float(edits.get(path,{}).get("print_scale",1.0))*\n'
+     '                                  float(spec_now.get("photo_scale",1.0)))\n'
+     '                    _,outer=visible_photo_geometry(zone,\n'
+     '                        [loc[0],loc[1],loc[2]*actual_scale,loc[3]*actual_scale],\n'
+     '                        (sw0,sh0),ls.get("angle",0),stretch=ls.get("stretch",False))\n'
+     '                    left,top,right,bottom=(xx+outer[0],yy+outer[1],\n'
+     '                                           xx+outer[2],yy+outer[3])\n'
+     '                photo_handle[:]=[right,bottom]\n'
+     '                preview_canvas.create_rectangle(left,top,right,bottom,outline=ACCENT,width=2)'),
+])
+
+# Encoger libremente hasta el 5% (nunca una imagen de 0 píxeles).
+patch('layout_editor.py', [
+    ('size_slider=tk.Scale(toolbar,from_=25 if is_free else 20',
+     'size_slider=tk.Scale(toolbar,from_=5 if is_free else 20'),
+    ('size_input=tk.Spinbox(toolbar,from_=25 if is_free else 20',
+     'size_input=tk.Spinbox(toolbar,from_=5 if is_free else 20'),
+    ('current_scale=max(.25,photo_scales[paths[index]])',
+     'current_scale=max(.05,photo_scales[paths[index]])'),
+])
+
+# Seguridad de memoria: también en vista normal y cuadrícula.
+patch('processor.py', [
+    ('        if opts.binding and opts.fit == "Ampliar fondo (sin recortar)":',
+     '        if print_scale>2.0:\n            from revelo_free_layers import editing_alpha,visible_photo_patch\n            blurred=(opts.fit=="Ampliar fondo (sin recortar)" or\n                     (opts.fit=="Ajustar (sin recortar)" and opts.paper_background=="Difuminado"))\n            page=(_extended_background(working,(out_w,out_h)) if blurred else\n                  Image.new("RGB",(out_w,out_h),paper_background_color(opts)\n                     if opts.fit=="Ajustar (sin recortar)" else "white"))\n            alpha=editing_alpha(path,opts.photo_edits.get(path),working.size)\n            try:\n                scaled=visible_photo_patch(working,alpha,box,\n                    ((box[0]+box[2])/2,(box[1]+box[3])/2),\n                    ((box[2]-box[0])*print_scale,(box[3]-box[1])*print_scale))\n                if scaled is not None:\n                    tile,pos=scaled\n                    try:page.paste(tile,pos,tile.getchannel("A"))\n                    finally:tile.close()\n            finally:\n                if alpha is not None:alpha.close()\n            return page,(w_mm,h_mm),low_resolution\n        if opts.binding and opts.fit == "Ampliar fondo (sin recortar)":'),
+    ("            if (cap and cap.get('placement', 'Debajo') == 'Debajo'\n                    and opts.fit == 'Ajustar (sin recortar)'):",
+     '            if photo_scale>2.0:\n                from revelo_free_layers import editing_alpha,visible_photo_patch\n                alpha=editing_alpha(path,opts.photo_edits.get(path),content.size)\n                try:\n                    region=visible_photo_patch(content,alpha,\n                        (cx0,cy0,cx1,photo_bottom),\n                        ((cx0+cx1)/2,(cy0+photo_bottom)/2),\n                        (cw*photo_scale,photo_ch*photo_scale))\n                    if region is not None:\n                        tile,pos=region\n                        try:sheet.paste(tile,pos,tile.getchannel("A"))\n                        finally:tile.close()\n                finally:\n                    if alpha is not None:alpha.close()\n            elif (cap and cap.get(\'placement\', \'Debajo\') == \'Debajo\'\n                    and opts.fit == \'Ajustar (sin recortar)\'):'),
+])
+
+with _MAIN_FILE.open('a', encoding='utf-8') as _main:
+    _main.write('\n# REVELO_FIX08_COMPLETADO\n')

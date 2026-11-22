@@ -128,8 +128,25 @@ def style_button(button: tk.Button, *, accent=None):
             is_accent, swatch = _appearance(button._editorial_requested_bg,
                                             button._editorial_fallback_accent)
             images = [ImageTk.PhotoImage(_paint(width, height, accent=is_accent,
-                          swatch=swatch, hover=hover, disabled=disabled), master=button)
-                      for hover, disabled in ((False, False), (True, False), (False, True))]
+                          swatch=swatch, hover=hover, disabled=False), master=button)
+                      for hover in (False, True)]
+            # La transparencia sobre un tk.Button desactivado deja ver el
+            # tramado nativo de Windows al pasar el ratón por encima.
+            # Componer primero sobre el fondo de la tarjeta produce una
+            # imagen opaca: el mismo botón neutro en TODOS los estados.
+            try:
+                parent_rgb=ImageColor.getrgb(button._editorial_parent_bg)
+            except (ValueError,TypeError):
+                parent_rgb=tuple(round(n/257) for n in
+                                 button.winfo_rgb(button._editorial_parent_bg))
+            disabled_art = Image.new('RGBA', (width, height), parent_rgb)
+            try:
+                disabled_art.alpha_composite(_paint(width, height,
+                    accent=False, swatch=None, hover=False, disabled=True))
+                images.append(ImageTk.PhotoImage(disabled_art.convert('RGB'),
+                                                 master=button))
+            finally:
+                disabled_art.close()
             button._editorial_assets = images
             button._editorial_text = label
             disabled = str(button.cget('state')) == 'disabled'

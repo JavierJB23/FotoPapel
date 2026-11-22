@@ -1,0 +1,44 @@
+REVELO v1.8.3 — FIX08
+=====================
+
+INSTALACIÓN EN GITHUB (SIN EDITAR CÓDIGO)
+---------------------------------------
+1. Descomprime este ZIP en tu ordenador.
+2. Abre https://github.com/JavierJB23/FotoPapel
+3. Pulsa «Add file» > «Upload files».
+4. Arrastra los archivos de la raíz y la carpeta «tests» del ZIP.
+   Conserva los nombres y la ruta tests/.
+5. Pulsa «Commit changes».
+6. En «Actions» se iniciará la compilación de Windows.
+7. Descarga «Revelo-Windows-CARPETA» de la ejecución completada en verde.
+
+NO modifiques el workflow ni copies código a mano. El archivo ui_fix_v183.py
+contiene todos los ajustes acumulados desde FIX02 hasta FIX08; el workflow
+existente lo ejecuta antes de las pruebas y de compilar.
+
+CAMBIOS FIX08
+-------------
+* Botones desactivados: imagen opaca oscura, sin tramado nativo al pasar el ratón.
+* Diseño libre: escala editable del 5 % al 800 % (antes 25 % a 150 %).
+* Escalado grande: se dibuja sólo la porción visible sobre el papel para
+  reducir drásticamente la memoria intermedia; los originales no se alteran.
+* Las miniaturas del orden se actualizan al cambiar Diseño libre / Cuadrícula.
+* Pies de foto personalizados: el editor de posición presenta la hoja real,
+  no una fotografía aislada; los nuevos puntos se guardan respecto al papel.
+* Compatible con posiciones antiguas: la clave position_space es opcional.
+* El rectángulo de edición de una foto girada sigue su posición/rotación real.
+* Las zonas transparentes al girar y enderezar dejan ver el fondo de la hoja,
+  incluso en composiciones libres de tres fotos.
+* Se conservan los tests FIX06/FIX07 y se agregan tests de FIX08.
+
+LÍMITES Y VERIFICACIÓN
+---------------------
+* Se ha comprobado localmente la sintaxis Python y el render aislado de
+  escalado/rotación/transparencias, además del estado visual desactivado.
+* La batería completa y la compilación Windows se realizarán en GitHub Actions.
+  No se afirma que haya pasado la compilación de Windows antes de ejecutarla.
+* El zoom máximo del 800 % es una protección práctica; no es infinito.
+* Las posiciones personalizadas de pie de foto pueden recorrer toda la hoja,
+  no más allá de sus bordes imprimibles.
+* No toca la geometría antigua guardada hasta que el usuario vuelva a mover
+  explícitamente esos textos; no modifica imágenes fuente.
