@@ -1,0 +1,38 @@
+REVELO v1.10.0 — BLOCK 02 — FIX04: NAVEGACIÓN ORGÁNICA E INDEPENDENCIA
+====================================================================
+BASE: GitHub Actions #103 correcta (FIX03); no se considera STABLE hasta
+que se pruebe esta revisión en Windows y el usuario la apruebe.
+
+SUBIR A GITHUB (Add file -> Upload files):
+  - ui_fix_v183.py                         [raíz]
+  - revelo_navigation_seamless.py          [raíz; nuevo]
+  - tests/test_v110_fix04_navegacion_organica_y_fondos_aislados.py  [tests/]
+
+NO subir el propio LEEME salvo que se quiera conservar.
+NO modificar workflow, ni volver a subir módulos anteriores.
+
+CAMBIOS:
+1. Anterior/Siguiente reutilizan el mismo Toplevel del editor libre.
+   Los controles se regeneran en el mismo evento, conservando tamaño y posición.
+2. Al navegar se guardan los ajustes de la hoja actual. Cancelar, sin guardar.
+3. Un fondo de hoja nuevo se aplica únicamente a los elementos de esa hoja.
+4. La navegación sin tocar fondos NO modifica las excepciones de otras fotos.
+5. El fondo global se sigue configurando desde el menú principal, con aviso
+   de sustitución. No se dispara esa acción al cambiar de hoja en el editor.
+6. Vista del editor / miniatura / previsualización / PDF y Word comparten los
+   mismos backgrounds_overrides y motor de composición existentes.
+7. Compatibilidad: el contrato antiguo de edit_sheet (sin
+   seamless_navigation=True) y su callback de geometría siguen funcionando.
+
+PRUEBAS:
+- Módulo nuevo y ui_fix_v183.py con sintaxis válida.
+- Verificados los 16 reemplazos de integración en simulador de fragmentos.
+- Integración de revelo_shared_layout.py aplicada a su fuente real de FIX10:
+  AST válida y 4/4 anclajes únicos.
+- 2 pruebas de aislamiento de fondos superadas localmente.
+- 3 pruebas de integración de interfaz/renderizador conservadas para CI Windows
+  (no simuladas ni declaradas aprobadas localmente).
+- La suite completa y la compilación real requieren GitHub Actions.
+
+IMPORTANTE: mantener el ejecutable STABLE anterior hasta que FIX04 compile,
+y después verificar tres hojas distintas con fondos y composiciones distintas.

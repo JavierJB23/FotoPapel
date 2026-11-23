@@ -679,3 +679,11 @@ from revelo_navigation_patch import apply_navigation as _apply_navigation
 _apply_navigation(patch)
 with _MAIN_FILE.open('a', encoding='utf-8') as _main:
     _main.write('\n# REVELO_V110_FIX02_NAVEGACION_COMPLETADO\n')
+
+# REVELO v1.10.0 BLOCK02 FIX04 — cambio de hojas continuo y fondos aislados.
+# Se aplica después de FIX03; conserva la navegación anterior como fallback
+# para pruebas y extensiones que pasen una geometría en forma de cadena.
+from revelo_navigation_seamless import apply_seamless as _apply_seamless
+_apply_seamless(patch)
+with _MAIN_FILE.open('a', encoding='utf-8') as _main:
+    _main.write('\n# REVELO_V110_FIX04_ORGANICO_COMPLETADO\n')
