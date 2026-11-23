@@ -673,3 +673,9 @@ from revelo_background_fix14 import apply_v110_fix14 as _apply_background_fix14
 _apply_background_fix14(patch)
 with _MAIN_FILE.open('a', encoding='utf-8') as _main:
     _main.write('\n# REVELO_V110_FIX14_COMPLETADO\n')
+
+# REVELO v1.10.0 BLOCK02 FIX02 — Navegación de páginas sin perder ediciones.
+from revelo_navigation_patch import apply_navigation as _apply_navigation
+_apply_navigation(patch)
+with _MAIN_FILE.open('a', encoding='utf-8') as _main:
+    _main.write('\n# REVELO_V110_FIX02_NAVEGACION_COMPLETADO\n')

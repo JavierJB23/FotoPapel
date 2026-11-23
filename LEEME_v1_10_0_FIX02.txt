@@ -1,0 +1,42 @@
+REVELO v1.10.0 — BLOCK 02 · FIX02 — NAVEGACIÓN Y CONTRASTE
+===========================================================
+Base: v1.10.0 BLOCK02 FIX01 (GitHub Actions #100 correcto).
+
+OBJETIVO
+- Dentro de «Diseño libre»: botones «Anterior» y «Siguiente» junto a
+  «Restablecer», para avanzar entre las HOJAS (grupos de fotos) del álbum.
+- Guardar automáticamente la composición de la hoja actual al navegar,
+  antes de abrir la nueva; «Cancelar» sigue descartando cambios sin guardar.
+- Conservar la posición y tamaño de la ventana al pasar a otra hoja.
+- Desactivar Anterior en la primera hoja y Siguiente en la última.
+- Mantener intactas las otras modalidades (cuadrícula, plantillas, QR,
+  fondos, opacidad, marcas de agua y exportación).
+- En el editor de fondos, letras oscuras cuando el botón «Elegir color…»
+  tenga fondo blanco o de color claro; letras claras sobre fondos oscuros.
+
+INSTALAR (SIN EDITAR CÓDIGO)
+1. Descomprimir el ZIP.
+2. En GitHub (JavierJB23/FotoPapel), pulsar Add file > Upload files.
+3. Subir los 3 archivos .py de la raíz y el .py que está dentro de tests,
+   conservando la carpeta tests.
+4. Pulsar Commit changes y comprobar GitHub Actions.
+5. Descargar el ejecutable únicamente si la compilación es correcta.
+
+ARCHIVOS
+ui_fix_v183.py                 - Parche acumulado FIX01 más FIX02.
+revelo_navigation_patch.py     - Cambio aislado de navegación en main/editor.
+revelo_background_ui.py       - Contraste del botón de elegir color.
+tests/test_v110_fix02_navegacion_y_contraste.py
+                               - Pruebas de navegación y contraste.
+
+VALIDACIÓN REALIZADA LOCALMENTE
+- Los ocho anclajes nuevos se encuentran una sola vez en el código actual
+  de GitHub; los archivos de partida corresponden exactamente a GitHub.
+- Sintaxis Python de los archivos incluidos correcta.
+- Aplicación del parche a módulos sintéticos y comprobación AST correcta.
+- Prueba gráfica Tk real de contraste del botón en blanco y oscuro correcta.
+- La prueba completa de Revelo y la compilación Windows quedan pendientes
+  de GitHub Actions y la aprobación del usuario: NO es aún STABLE.
+
+NO SUBIR los archivos de desarrollo usados para pruebas locales ni modificar
+el workflow. El ZIP solo contiene los archivos necesarios.

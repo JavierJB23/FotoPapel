@@ -25,6 +25,16 @@ def _label(parent, text, size=10, color=TEXT, bold=False, **kwargs):
                     font=('Segoe UI',size,'bold' if bold else 'normal'),**kwargs)
 
 
+def _contrast_fg(background: str) -> str:
+    """Texto oscuro sobre colores claros y blanco sobre colores oscuros (sRGB)."""
+    from PIL import ImageColor
+    red,green,blue=ImageColor.getrgb(background)
+    linear=[(v/255/12.92 if v/255<=0.04045 else
+             ((v/255+0.055)/1.055)**2.4) for v in (red,green,blue)]
+    lightness=.2126*linear[0]+.7152*linear[1]+.0722*linear[2]
+    return '#10202D' if lightness>=.36 else '#FFFFFF'
+
+
 def open_background_editor(app, selected_path=None):
     """Abre la configuración de fondos, sin alterar los datos hasta Guardar."""
     if app.is_busy:
@@ -102,10 +112,15 @@ def open_background_editor(app, selected_path=None):
                    showvalue=True,highlightthickness=0,length=265)
     scale.pack(fill='x',pady=(0,10))
     color_row=tk.Frame(middle,bg=SURFACE);color_row.pack(fill='x',pady=(0,12))
+    def update_color_chip():
+        """Contraste legible del botón de color, en todos los fondos."""
+        foreground=_contrast_fg(color[0])
+        chip.configure(bg=color[0],fg=foreground,activeforeground=foreground)
+
     def choose_color():
         picked=colorchooser.askcolor(color=color[0],parent=win,title='Revelo · Color de fondo')
         if picked and picked[1]:
-            color[0]=picked[1].upper();chip.configure(bg=color[0]);changed()
+            color[0]=picked[1].upper();update_color_chip();changed()
     chip=tk.Button(color_row,text='Elegir color…',bg=PANEL,fg=TEXT,
                    activebackground=PANEL,command=choose_color,relief='flat',padx=8,pady=8)
     chip.pack(fill='x')
@@ -188,7 +203,7 @@ def open_background_editor(app, selected_path=None):
         opacity.set(spec.get('opacity',100))
         fit.set(spec.get('fit','Cubrir'))
         chosen_name.set(Path(image[0]).name if image[0] else 'Sin imagen')
-        chip.configure(bg=color[0])
+        update_color_chip()
         syncing[0]=False
         refresh_controls();schedule_preview()
 
