@@ -20,8 +20,11 @@ def test_shared_editor_options_preserve_one_scale_without_double_multiplication(
     from processor import ExportOptions
     from revelo_shared_layout import editor_options
     p=image(tmp_path,'a.png','#CC4422')
+    individual={'mode':'Color','color':'#AABBCC','opacity':35}
     original=ExportOptions(paper='A5',dpi=90,fit='Ajustar (sin recortar)',
         photos_per_page=1,layout_template='Diseño libre',
+        paper_background='Azul noche',
+        background_overrides={p:dict(individual)},
         photo_edits={p:{'print_scale':.8}},
         captions={p:{'title':'Leyenda','placement':'Personalizado',
                      'photo_scale':.75}},
@@ -33,7 +36,15 @@ def test_shared_editor_options_preserve_one_scale_without_double_multiplication(
     assert opts.photo_edits[p]['print_scale']==pytest.approx(expected)
     assert opts.captions[p]['photo_scale']==1.0
     assert opts.layout_items[p]['angle']==17.0
-    assert opts.layout_items[p]['background']=='Aguamarina'
+    # Desde FIX06, Diseño libre controla solo posición/escala/giro.
+    # Los argumentos de fondo legado no pueden cambiar el fondo general,
+    # ni insertar un fondo falso en el layout, ni sobrescribir la opacidad.
+    assert 'background' not in opts.layout_items[p]
+    assert 'background_color' not in opts.layout_items[p]
+    assert opts.paper_background == original.paper_background == 'Azul noche'
+    assert opts.paper_background_color == original.paper_background_color
+    assert opts.background_overrides[p] == individual
+    assert original.background_overrides[p] == individual
     assert original.photo_edits[p]['print_scale']==.8
     assert original.captions[p]['photo_scale']==.75
 
