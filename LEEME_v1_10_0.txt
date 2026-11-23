@@ -1,0 +1,62 @@
+REVELO v1.10.0 — BLOCK 02 · FONDOS INDIVIDUALES Y MARCAS DE AGUA
+===============================================================
+Base: Revelo v1.9.0 BLOCK 01 STABLE (QR bidireccional aprobado).
+
+CÓMO ACTUALIZAR
+1. Descomprime este ZIP.
+2. En el repositorio JavierJB23/FotoPapel, pulsa Add file → Upload files.
+3. Sube los cinco archivos .py de la raíz, y el archivo
+   tests/test_v110_fondos_individuales.py dentro de tests/.
+4. Pulsa Commit changes.
+5. Comprueba GitHub Actions y descarga el EXE cuando termine correctamente.
+
+No borres los archivos anteriores del repositorio ni modifiques el workflow.
+No se reemplaza el QR ni se reinicia ningún proyecto existente.
+
+NOVEDADES
+- Botón «Fondos por foto · opacidad» junto a la configuración de impresión.
+- Botón «Fondo individual» en cada tarjeta de fotografía.
+- Editor con «Todas las fotografías» y cada foto por separado.
+- Heredar fondo común, colores predeterminados, color elegido, imagen
+  personalizada, difuminado y opción sin fondo adicional.
+- Opacidad del 0 al 100 %, incluyendo fondos tenues tipo marca de agua.
+- Imagen de fondo encajada por «Cubrir» o «Ajustar».
+- Una vista previa de la hoja real, con foto(s), textos y composiciones.
+- Un único motor para hoja, miniaturas, PDF, Word e imágenes exportadas.
+- Las imágenes de fondo se embeben en el proyecto .revelo, con hashes SHA256.
+- Los proyectos antiguos sin estos fondos conservan exactamente su renderizado.
+- Portadas y separadores siguen usando su editor de fondos existente.
+
+CÓMO UTILIZARLO
+1. Selecciona «Ajustar (sin recortar)» en el encaje del papel.
+2. Pulsa «Fondos por foto · opacidad».
+3. En «Todas las fotografías», escoge un fondo común, o déjalo en
+   «Usar fondo general» para conservar el fondo actual del papel.
+4. Selecciona una fotografía a la izquierda para aplicar un fondo único.
+5. Si eliges «Imagen personalizada», pulsa «Elegir imagen de fondo…».
+6. Usa «Opacidad» para ajustar su presencia: 20-35 % funciona como
+   marca de agua, 100 % como fondo completamente visible.
+7. Guarda y utiliza Vista previa / Exportar / Guardar proyecto como siempre.
+
+NOTAS
+- Los fondos reemplazan el papel visible detrás de las fotografías sin
+  tapar las imágenes nítidas ni los pies de foto.
+- En modos que llenan todo el papel (Rellenar/Ampliar fondo), los fondos
+  adicionales no se aplican; el editor indica elegir «Ajustar (sin recortar)».
+- El procesamiento de fondos de imagen de alta resolución consume más
+  memoria y tiempo de CPU que un fondo de color simple; los originales
+  permanecen intactos.
+- Para conservar el fondo junto con las fotos, guarda un proyecto .revelo.
+
+VALIDACIÓN REALIZADA ANTES DE ENTREGAR
+- Sintaxis AST/compilación de los seis archivos Python del paquete: OK.
+- Prueba de validación con 8 casos inválidos: OK.
+- Composición local con negro/blanco testigo, color y transparencia: OK.
+- Prueba real de composición con una imagen de fondo mediante Pillow: OK.
+- Escritura, SHA256 y recuperación de imagen de fondo ZIP: OK.
+- Apertura/cierre y guardado del editor Tk en Xvfb: OK.
+- Anclajes de sustitución contrastados con Github: OK.
+- Integración completa y compilación Windows: PENDIENTE DE GITHUB ACTIONS.
+
+Este paquete es CANDIDATO A STABLE. Solo declararlo estable tras revisar
+la compilación y confirmar su funcionamiento en el equipo del usuario.

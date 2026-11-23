@@ -658,3 +658,11 @@ patch('mobile_import.py', [
 # No sustituir ni reconstruir el servidor PhoneTransferServer original.
 from revelo_qr_patch import apply_all as _apply_revelo_qr
 _apply_revelo_qr(patch)
+
+
+# REVELO v1.10.0 — BLOCK 02 · Fondos independientes, opacidad y marcas de agua.
+# Partir del QR bidireccional STABLE; no modificar los servidores QR.
+from revelo_background_patch import apply_v110 as _apply_backgrounds_v110
+_apply_backgrounds_v110(patch, replace_section)
+with _MAIN_FILE.open('a', encoding='utf-8') as _main:
+    _main.write('\n# REVELO_V110_FONDOS_COMPLETADO\n')
