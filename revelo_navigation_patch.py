@@ -50,10 +50,12 @@ def apply_navigation(patch):
          '        if angle_typing_job[0] is not None:',
          '    def finish(save, navigate=0):\n'
          '        if angle_typing_job[0] is not None:'),
-        ('        for photo in thumbs:photo.close()\n'
-         '        dialog.destroy()\n\n'
+        # FIX03: anclar SOLO el cierre del dialogo. FIX08 ya añadió una
+        # limpieza de alpha_thumbs justo antes de dialog.destroy(), así que
+        # buscar el bloque entero antiguo causaba el error en GitHub #102.
+        # Este cambio conserva intactas las liberaciones de imágenes y máscaras.
+        ('        dialog.destroy()\n\n'
          "    _btn(buttons,'Cancelar',lambda:finish(False)).pack(side='right')",
-         '        for photo in thumbs:photo.close()\n'
          '        old_geometry=dialog.geometry() if navigate else None\n'
          '        dialog.destroy()\n'
          '        if navigate and on_navigate is not None:\n'

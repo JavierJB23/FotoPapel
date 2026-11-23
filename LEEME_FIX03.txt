@@ -1,0 +1,36 @@
+REVELO v1.10.0 · BLOCK 02 · FIX03
+Correccion de la compilacion GitHub Actions #102 (navegacion de diseño libre)
+
+CAUSA CONFIRMADA
+La rutina antigua de FIX08 insertaba la liberacion de alpha_thumbs justo antes
+ de dialog.destroy() en layout_editor.py. El nuevo parche FIX02 esperaba que
+ la liberacion aun no existiera; la coincidencia de texto fallaba y detenia
+ la compilacion ANTES de pytest.
+
+CORRECCION
+revelo_navigation_patch.py ahora inserta el guardado de geometria y el
+ cambio de hoja justo alrededor del cierre de la ventana, sin sustituir la
+ limpieza preexistente de fotos y mascaras alfa. Se mantienen los botones
+ Anterior/Siguiente y el contraste dinamico de botones claros del FIX02.
+
+INSTALACION (sin modificar codigo)
+1. Descomprimir el ZIP.
+2. Entrar en el repositorio JavierJB23/FotoPapel en GitHub.
+3. Add file > Upload files.
+4. Subir SOLO revelo_navigation_patch.py, sobrescribiendo el archivo existente.
+5. Commit changes y verificar la nueva ejecucion de GitHub Actions.
+
+NO es necesario volver a subir ui_fix_v183.py, otros modulos, ni los tests:
+ya estan en el repositorio. Las pruebas de FIX02 se conservan.
+
+COMPROBACIONES PREVIAS
+- Causa localizada en el traceback exacto de la ejecucion #102.
+- Aplicacion de los siete cambios del modulo en codigos de prueba representativos.
+- Compatibilidad comprobada con la sustitucion real de FIX08 extraida de
+  ui_fix_v183.py; el borrado de mascaras alfa sigue presente.
+- Prueba grafica Tk del boton de color sobre fondos claros y oscuros.
+- Sintaxis Python correcta.
+
+LIMITACION: no se ha ejecutado el conjunto completo del repositorio en
+Windows; GitHub Actions debe confirmar la compilacion y las pruebas.
+No declarar STABLE hasta que el usuario confirme el funcionamiento.
