@@ -1,0 +1,56 @@
+REVELO v1.10.0 · BLOCK 02 — FIX01 · Fondos individuales en hojas múltiples
+======================================================================
+
+BASE: REVELO v1.10.0 BLOCK02, que parte de v1.9.0 STABLE.
+NO es una nueva versión STABLE hasta que GitHub compile y el usuario la pruebe.
+
+CÓMO INSTALAR SIN EDITAR CÓDIGO:
+1. Descomprime este ZIP.
+2. En GitHub, repositorio JavierJB23/FotoPapel, usa Add file > Upload files.
+3. Arrastra los archivos .py de la raíz y la carpeta tests, conservando la ruta tests/.
+4. Pulsa Commit changes y comprueba Actions.
+5. Conserva el ejecutable estable anterior hasta probar el nuevo.
+
+CAMBIOS:
+- Fondos por foto visibles también en "Diseño libre" con 2 o más fotos;
+  las regiones del papel se asocian a sus fotos y no se tapa el primer plano.
+- En el desplegable "FONDO DEL PAPEL", "Personalizado" abre el editor
+  que permite elegir por foto o para todas, incluso con 1 foto por hoja.
+- Nueva entrada "Imagen para todas" en el mismo desplegable: permite
+  seleccionar una imagen como fondo general (calidad original, encaje Cubrir).
+- Al pasar a un color general (Blanco, Crema, Aguamarina, Azul noche,
+  Difuminado o Color personalizado) o una imagen general, si hay fondos
+  individuales o globales personalizados, solicita confirmación antes de
+  sustituirlos. Si se cancela, no altera ninguna configuración de capas.
+- Elegir "Personalizado" y cancelar su editor restaura el selector previo.
+- Conserva el color común anterior bajo las transparencias al pasar al
+  editor personalizado.
+- Conserva el porcentaje de opacidad, guardado .revelo, miniaturas y exportes
+  a través del motor de renderizado compartido de BLOCK02.
+- No modifica la importación/exportación QR.
+
+IMPORTANTE SOBRE DISEÑO LIBRE:
+En una misma hoja con varias fotos, el fondo propio de cada foto ocupa una
+zona de papel alrededor de esa foto, delimitada por la cercanía a los centros
+de las otras fotos. El fondo general cubre el resto de la hoja; las fotos y
+los textos siguen intactos encima. Se puede usar una imagen general detrás
+de toda la composición en "Fondos por foto · opacidad", sección "Todas",
+o directamente "Imagen para todas" desde el desplegable.
+
+COMPROBACIONES PREVIAS:
+- AST/compileall de archivos incluidos.
+- 13 pruebas locales independientes pasadas.
+- Pruebas gráficas/integradas con main.py y motor Windows quedan activadas en
+  tests/test_v110_fix14_fondos_libres_y_menu.py para GitHub Actions.
+- Puntos de parche contrastados con el repositorio y versión anterior.
+
+ARCHIVOS QUE DEBEN SUBIRSE:
+ui_fix_v183.py
+revelo_background_fix14.py
+revelo_background_control.py
+revelo_background_free.py
+revelo_backgrounds.py
+revelo_background_ui.py
+tests/test_v110_fix14_fondos_libres_y_menu.py
+
+No subir los módulos de BLOCK02 que no aparecen: permanecen en GitHub.

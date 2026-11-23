@@ -216,6 +216,15 @@ def open_background_editor(app, selected_path=None):
         w,h=canvas.winfo_width(),canvas.winfo_height()
         if w<50 or h<50:return
         opts=app._options()
+        # Al abrir «Personalizado» desde un color general, la vista previa
+        # conserva ese mismo color hasta que el usuario pulse Guardar.
+        # Cancelar no modifica ni la hoja ni las excepciones individuales.
+        previous=getattr(app,'_background_pending_custom_from',None)
+        if previous in PRESETS:
+            opts=replace(opts,paper_background='Personalizado',
+                         paper_background_color=PRESETS[previous])
+        elif previous=='Difuminado':
+            opts=replace(opts,paper_background='Difuminado')
         groups=list(app._groups())
         index,group=next(((idx,group) for idx,group in enumerate(groups) if p in group),
                          (0,(p,)))
@@ -264,6 +273,8 @@ def open_background_editor(app, selected_path=None):
             try:win.after_cancel(preview_job[0])
             except tk.TclError:pass
         app.background_window=None
+        from revelo_background_control import cancel_custom_choice
+        cancel_custom_choice(app)
         win.destroy()
     def save():
         store()
@@ -280,6 +291,8 @@ def open_background_editor(app, selected_path=None):
             return
         app.background_global=global_saved
         app.background_overrides={p:s for p,s in local_saved.items() if s}
+        from revelo_background_control import commit_custom_editor
+        commit_custom_editor(app, global_saved, app.background_overrides)
         app.thumbnails.clear();app.thumbnails_small.clear();app.sheet_thumbnails.clear()
         close()
         app.render_library();app.render_order()

@@ -666,3 +666,10 @@ from revelo_background_patch import apply_v110 as _apply_backgrounds_v110
 _apply_backgrounds_v110(patch, replace_section)
 with _MAIN_FILE.open('a', encoding='utf-8') as _main:
     _main.write('\n# REVELO_V110_FONDOS_COMPLETADO\n')
+
+# FIX14 — fondos individuales visibles en diseño libre y menú general seguro.
+# Los bloques anteriores siguen siendo compatibles con v1.9 y v1.10.
+from revelo_background_fix14 import apply_v110_fix14 as _apply_background_fix14
+_apply_background_fix14(patch)
+with _MAIN_FILE.open('a', encoding='utf-8') as _main:
+    _main.write('\n# REVELO_V110_FIX14_COMPLETADO\n')

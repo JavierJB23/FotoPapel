@@ -191,7 +191,7 @@ def compose_backgrounds(paths: Sequence[Path], opts, base_render: Callable,
             sheet=original
             legacy=(original.copy() if any(
                 x.get('mode')=='Sin fondo adicional' for x in individual.values()) else None)
-            def apply(spec,rect,photo):
+            def apply(spec,rect,photo,region_mask=None):
                 nonlocal sheet
                 if not spec:
                     return
@@ -202,7 +202,7 @@ def compose_backgrounds(paths: Sequence[Path], opts, base_render: Callable,
                 if spec['mode']=='Sin fondo adicional':
                     if legacy is None:return
                     patch=legacy.crop(box)
-                    try:sheet.paste(patch,box[:2])
+                    try:sheet.paste(patch,box[:2],region_mask)
                     finally:patch.close()
                     return
                 if spec['opacity']==0:
@@ -217,15 +217,30 @@ def compose_backgrounds(paths: Sequence[Path], opts, base_render: Callable,
                     recolored=ImageChops.add(black_patch,contribution)
                     try:
                         mixed=Image.blend(current,recolored,spec['opacity']/100.0)
-                        try:sheet.paste(mixed,box[:2])
+                        try:sheet.paste(mixed,box[:2],region_mask)
                         finally:mixed.close()
                     finally:contribution.close();recolored.close()
                 finally:
                     current.close();mask_rgb.close();strength_patch.close();black_patch.close();layer.close()
             if bg_global:
                 apply(bg_global,(0,0,*sheet.size),paths[0])
-            regions=_regions(paths,opts,sheet.size,physical,page_index) if any(individual.values()) else {}
-            if regions:
+            if any(individual.values()) and opts.layout_template=='Diseño libre':
+                # En libre los fondos no pueden quedar ocultos bajo la propia
+                # foto; cada imagen define una zona de página, sin alterar
+                # fotos ni textos ya compuestos. El fondo general permanece
+                # visible detrás de las zonas sin excepción particular.
+                from revelo_background_free import free_background_area
+                for p in paths:
+                    if not individual[p]:
+                        continue
+                    region=free_background_area(paths,p,opts,sheet.size,physical,page_index)
+                    if region is None:
+                        continue
+                    box,mask=region
+                    try:apply(individual[p],box,p,mask)
+                    finally:mask.close()
+            elif any(individual.values()):
+                regions=_regions(paths,opts,sheet.size,physical,page_index)
                 for p in paths:
                     if individual[p]:
                         apply(individual[p],regions[p],p)
