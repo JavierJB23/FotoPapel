@@ -709,3 +709,22 @@ patch('tests/test_v175_fix03_shared_views.py', [
      "        assert own_background['opacity']==100\n"
      "        result,_,_=render_layout_page((photo,),app._options(),preview_max_size=(330,240))"),
 ])
+
+# REVELO v1.10.0 BLOCK02 FIX06 — El editor libre solo cambia geometría.
+# ÚNICO punto de edición de fondos: «Fondos por foto · opacidad».
+# Orden de ejecución: después de FIX05, cuando están aplicados FIX08 y FIX04.
+from revelo_background_editor_separation import apply_fix06 as _apply_fix06_fondos
+_apply_fix06_fondos(patch, replace_section)
+
+# Verificar sintaxis de los módulos que se acaban de editar, antes de pytest.
+import ast as _revelo_ast
+for _revelo_target in (
+    'main.py', 'layout_editor.py', 'revelo_shared_layout.py',
+    'tests/test_v175_fix03_shared_views.py',
+    'tests/test_v110_fix04_navegacion_organica_y_fondos_aislados.py',
+):
+    _revelo_source = (Path(__file__).resolve().parent / _revelo_target).read_text(encoding='utf-8')
+    _revelo_ast.parse(_revelo_source, filename=_revelo_target)
+
+with _MAIN_FILE.open('a', encoding='utf-8') as _main:
+    _main.write('\n# REVELO_V110_FIX06_FONDOS_SOLO_EDITOR_DE_FONDOS\n')

@@ -1,25 +1,31 @@
-REVELO v1.8.3 — FIX06 | Corrección de botones y alineación
+REVELO v1.10.0 — BLOCK 02 · FIX06 — Separación del editor libre y los fondos
 
-PARA SUBIR A GITHUB (sin editar código):
-1. Descomprime el ZIP en una carpeta.
-2. Abre tu repositorio de Revelo en GitHub.
-3. En Add file > Upload files, arrastra los dos archivos .py de la raíz
-   y la carpeta tests. Confirma los cambios (Commit changes).
-4. GitHub ejecutará automáticamente sus pruebas y la compilación.
-5. Descarga Revelo-Windows-CARPETA si la ejecución está en verde.
+BASE: v1.10.0 BLOCK02 FIX05; compilación de GitHub #106 completada correctamente.
 
-CONTENIDO:
-- ui_fix_v183.py: parche COMPLETO (FIX02 a FIX06), ejecutado por el workflow
-  YA CONFIGURADO en tu repositorio. No edites windows-exe.yml.
-- revelo_button_skin.py: componente de botones con bordes transparentes
-  y estados dinámicos. Se importa al compilar.
-- tests/test_fix06_botones_y_distribucion.py: pruebas añadidas de estado activo,
-  muestras de color, esquinas alpha y fila adaptable de botones.
+QUÉ CAMBIA
+- «Diseño libre» se dedica exclusivamente a la composición de fotos:
+  mover, redimensionar, girar, superponer y navegar por hojas.
+- Se retira «Fondo de la hoja» y «Elegir color…» de esa ventana.
+- Sólo «Fondos por foto · opacidad» modifica fondos comunes, individuales,
+  imágenes y opacidad. Esos fondos permanecen visibles en Diseño libre.
+- Abrir, navegar, guardar o cancelar una composición nunca altera fondos.
+- El render de Diseño libre hereda exactamente el fondo de la exportación.
+- Se conservan el QR bidireccional y las funciones anteriores.
 
-MUY IMPORTANTE: carga AMBOS archivos .py. Si falta revelo_button_skin.py,
-las nuevas ventanas no podrán dibujar los botones.
+PARA SUBIR A GITHUB
+1. Descomprime el ZIP.
+2. Ve a github.com/JavierJB23/FotoPapel -> Add file -> Upload files.
+3. Arrastra ui_fix_v183.py, revelo_background_editor_separation.py y
+   la carpeta tests (con test_v110_fix06_separacion_editor_fondos.py).
+4. Commit changes. Sin editar archivos manualmente.
 
-No se modifica el motor de exportación PDF/Word, QR ni las fotografías.
-Validación local: sintaxis de los archivos, test de botones con Xvfb y
-verificación de los cambios acumulados sobre la estructura de GitHub.
-La validación total y visual final corresponde a la compilación Windows.
+VERIFICACIONES REALIZADAS
+- Coincidencia de la versión base del script con el archivo de GitHub.
+- Anclajes contra los archivos reales de GitHub y simulación de las transformaciones.
+- Compilación sintáctica de todos los nuevos Python.
+- Prueba local de composición: 3 fondos individuales, sin propagación.
+- Pruebas históricas conservadas y actualizadas para la nueva separación.
+- Test de igualdad de píxeles de editor e impresión añadido a GitHub Actions.
+
+PENDIENTE: prueba completa de GitHub Actions/Windows y validación visual del usuario.
+No declarar estable sin dicha validación.
