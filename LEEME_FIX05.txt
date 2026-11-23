@@ -1,15 +1,38 @@
-REVELO v1.8.3 FIX05 — PAQUETE PARA GITHUB
+REVELO v1.10.0 — BLOCK 02 · FIX05 — COMPATIBILIDAD DE PRUEBA HISTÓRICA
 
-1. Descomprime este ZIP.
-2. En tu repositorio JavierJB23/FotoPapel abre ui_fix_v183.py.
-3. GitHub no permite sobreescribir desde Add file > Upload files si el fichero ya existe en la raiz en algunos flujos.
-   Si muestra conflicto, utiliza la opción de sustituir el archivo disponible en la interfaz de GitHub.
-4. Guarda con Commit changes. El workflow ya tiene configurada la ejecucion automatica del parche.
+Origen: ejecución de GitHub Actions #105, 268 pruebas correctas, 1 fallida.
 
-CAMBIOS: restaurar reparto 5:6, alinear márgenes exteriores, agrupar QR/Vaciar,
-eliminar brillo rectangular de los botones, retirar arcos decorativos, botones de
-orden con esquinas moderadas y barras de desplazamiento personalizadas.
+CAUSA
+La prueba test_free_background_change_updates_main_and_clears_local_override
+fue escrita cuando "Fondo de la hoja" modificaba también el fondo GENERAL.
+La nueva especificación (FIX04, aceptada para desarrollo) exige lo contrario:
+los cambios desde el editor libre solo afectan a la hoja actual.
 
-Este archivo es un PARCHE de codigo fuente: no es el ejecutable.
-No se han alterado el motor PDF, QR ni la exportacion.
-Validacion: comprobacion de sintaxis local. GitHub ejecutara las pruebas en Windows.
+CORRECCIÓN
+Se mantiene esa prueba histórica pero se adapta a la nueva especificación.
+Ahora verifica:
+  - el fondo general "Azul noche" NO se cambia;
+  - la hoja actual guarda una excepción individual "Crema" con opacidad 100 %;
+  - el motor de maquetación realmente muestra ese fondo crema;
+  - no queda el ajuste de fondo heredado en layout_items.
+Se conservan las pruebas adicionales de navegación sin cierre y de aislamiento
+entre hojas introducidas en FIX04. No se eliminan ni se desactivan pruebas.
+
+ARCHIVO QUE HAY QUE SUBIR A GITHUB
+- ui_fix_v183.py (raíz del repositorio)
+
+PROCEDIMIENTO
+1. Descomprimir ZIP.
+2. Abrir https://github.com/JavierJB23/FotoPapel
+3. Add file > Upload files > subir ui_fix_v183.py > Commit changes.
+4. Verificar el workflow. Solo si finaliza con éxito, descargar y probar
+   Revelo.exe en Windows. Conservar el ejecutable estable anterior.
+
+VALIDACIÓN DISPONIBLE
+- Registro de GitHub Actions #105 revisado para identificar el único error.
+- Script de actualización contrastado por SHA Git con el archivo de GitHub.
+- Dos anclajes verificados como únicos en la prueba original de GitHub.
+- Sintaxis del script y reemplazos comprobados localmente.
+- Dos pruebas locales de aislamiento de fondos superadas.
+
+La batería completa en Windows queda pendiente de GitHub Actions.

@@ -687,3 +687,25 @@ from revelo_navigation_seamless import apply_seamless as _apply_seamless
 _apply_seamless(patch)
 with _MAIN_FILE.open('a', encoding='utf-8') as _main:
     _main.write('\n# REVELO_V110_FIX04_ORGANICO_COMPLETADO\n')
+
+# REVELO v1.10.0 BLOCK02 FIX05 — Actualizar una prueba legacy que exigía
+# modificar el color GENERAL de todo el proyecto desde el editor de UNA hoja.
+# Desde FIX04, ese selector es intencionadamente local: modifica los fondos
+# individuales de la hoja seleccionada, y el global permanece intacto.
+# Se mantiene la prueba original, se refuerza y no se salta ninguna prueba.
+patch('tests/test_v175_fix03_shared_views.py', [
+    ('def test_free_background_change_updates_main_and_clears_local_override(tmp_path):',
+     'def test_free_background_change_updates_only_active_sheet_not_main(tmp_path):'),
+    ("        assert app.paper_background.get()=='Crema'\n"
+     "        assert app.layout_items[photo].get('background') is None\n"
+     "        result,_,_=render_layout_page((photo,),app._options(),preview_max_size=(330,240))",
+     "        # El fondo global sigue Azul noche: cambiar esta hoja no altera las demás.\n"
+     "        assert app.paper_background.get()=='Azul noche'\n"
+     "        assert app.layout_items[photo].get('background') is None\n"
+     "        # Sí se ha guardado el fondo local, con color y opacidad reales.\n"
+     "        own_background=app.background_overrides[photo]\n"
+     "        assert own_background['mode']=='Color'\n"
+     "        assert own_background['color']=='#F6EBDC'\n"
+     "        assert own_background['opacity']==100\n"
+     "        result,_,_=render_layout_page((photo,),app._options(),preview_max_size=(330,240))"),
+])
